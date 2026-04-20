@@ -7,7 +7,7 @@ import { useAppState } from '@/composables/useAppState'
 import type { RequestRecord, StatsSummary } from '@/types'
 import { formatNumber, formatTime, readError } from '@/utils/format'
 
-const { summary, successRate, loadStats } = useAppState()
+const { summary, successRate, loadStats, resolveModelAlias, resolveProviderName } = useAppState()
 
 const requestColumns: TableColumnsType<RequestRecord> = [
   {
@@ -24,6 +24,7 @@ const requestColumns: TableColumnsType<RequestRecord> = [
   {
     title: 'Provider',
     dataIndex: 'provider',
+    key: 'provider',
     width: 120,
   },
   {
@@ -35,6 +36,7 @@ const requestColumns: TableColumnsType<RequestRecord> = [
   {
     title: '实际模型',
     dataIndex: 'targetModel',
+    key: 'targetModel',
     width: 180,
     ellipsis: true,
   },
@@ -74,12 +76,14 @@ const modelColumns: TableColumnsType<StatsSummary['byModel'][number]> = [
   {
     title: '实际模型',
     dataIndex: 'targetModel',
+    key: 'targetModel',
     width: 180,
     ellipsis: true,
   },
   {
     title: 'Provider',
     dataIndex: 'provider',
+    key: 'provider',
     width: 120,
   },
   {
@@ -110,6 +114,22 @@ const modelColumns: TableColumnsType<StatsSummary['byModel'][number]> = [
 
 function modelRowKey(record: StatsSummary['byModel'][number]) {
   return `${record.provider}:${record.model}:${record.targetModel}`
+}
+
+function displayTargetModel(providerName: string, model: string) {
+  return resolveModelAlias(providerName, model)
+}
+
+function hasTargetModelAlias(providerName: string, model: string) {
+  return displayTargetModel(providerName, model) !== model
+}
+
+function displayProviderName(providerName: string, model: string) {
+  return resolveProviderName(providerName, model)
+}
+
+function hasProviderNameAlias(providerName: string, model: string) {
+  return displayProviderName(providerName, model) !== providerName
 }
 
 async function resetAllStats(label: string) {
@@ -199,7 +219,19 @@ async function removeRequest(record: RequestRecord) {
           :row-key="modelRowKey"
         >
           <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'action'">
+            <template v-if="column.key === 'provider'">
+              <a-tooltip v-if="hasProviderNameAlias(record.provider, record.targetModel)" :title="record.provider">
+                <span>{{ displayProviderName(record.provider, record.targetModel) }}</span>
+              </a-tooltip>
+              <span v-else>{{ record.provider }}</span>
+            </template>
+            <template v-else-if="column.key === 'targetModel'">
+              <a-tooltip v-if="hasTargetModelAlias(record.provider, record.targetModel)" :title="record.targetModel">
+                <span>{{ displayTargetModel(record.provider, record.targetModel) }}</span>
+              </a-tooltip>
+              <span v-else>{{ record.targetModel }}</span>
+            </template>
+            <template v-else-if="column.key === 'action'">
               <a-popconfirm
                 title="确认删除这组模型统计？"
                 description="会删除匹配该映射模型、实际模型和 Provider 的全部请求记录。"
@@ -242,7 +274,19 @@ async function removeRequest(record: RequestRecord) {
           row-key="id"
         >
           <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'action'">
+            <template v-if="column.key === 'provider'">
+              <a-tooltip v-if="hasProviderNameAlias(record.provider, record.targetModel)" :title="record.provider">
+                <span>{{ displayProviderName(record.provider, record.targetModel) }}</span>
+              </a-tooltip>
+              <span v-else>{{ record.provider }}</span>
+            </template>
+            <template v-else-if="column.key === 'targetModel'">
+              <a-tooltip v-if="hasTargetModelAlias(record.provider, record.targetModel)" :title="record.targetModel">
+                <span>{{ displayTargetModel(record.provider, record.targetModel) }}</span>
+              </a-tooltip>
+              <span v-else>{{ record.targetModel }}</span>
+            </template>
+            <template v-else-if="column.key === 'action'">
               <a-popconfirm
                 title="确认删除这条请求记录？"
                 description="删除后相关模型统计会重新计算。"

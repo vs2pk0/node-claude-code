@@ -343,9 +343,32 @@ pre,
   background: #ffffff;
 }
 
+.model-row-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.85fr) 34px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.model-row-add {
+  justify-self: start;
+}
+
 .json-editor textarea,
+.curl-import-editor,
 .json-preview {
   line-height: 1.55;
+}
+
+.curl-import-editor {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
 }
 
 .json-preview {

@@ -9,6 +9,7 @@ const providerSchema = z
     api_base_url: z.string().trim().min(1, 'Provider API base URL is required'),
     api_key: z.string().default(''),
     models: z.array(z.string().trim().min(1)).default([]),
+    model_aliases: z.record(z.string(), z.string()).optional(),
     transformer: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough()

@@ -5,6 +5,7 @@ export interface ProviderConfig {
   api_base_url: string
   api_key: string
   models: string[]
+  model_aliases?: Record<string, string>
   transformer?: Record<string, unknown>
   [key: string]: unknown
 }
