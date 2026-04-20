@@ -65,7 +65,48 @@ export function createApiRouter() {
     res.json(storage.getRecentRequests(Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 500) : 50))
   })
 
+  router.delete('/stats/requests', (_req, res) => {
+    res.json(storage.deleteAllRequests())
+  })
+
+  router.delete('/stats/requests/:id', (req, res) => {
+    const result = storage.deleteRequest(req.params.id)
+    if (!result.deleted) {
+      res.status(404).json({
+        error: {
+          type: 'not_found',
+          message: 'Request record was not found',
+        },
+      })
+      return
+    }
+
+    res.json(result)
+  })
+
+  router.delete('/stats/models', (req, res) => {
+    const provider = readString(req.body?.provider ?? req.query.provider)
+    const model = readString(req.body?.model ?? req.query.model)
+    const targetModel = readString(req.body?.targetModel ?? req.query.targetModel)
+
+    if (!provider || !model || !targetModel) {
+      res.status(400).json({
+        error: {
+          type: 'validation_error',
+          message: 'provider, model and targetModel are required',
+        },
+      })
+      return
+    }
+
+    res.json(storage.deleteModelStats({ provider, model, targetModel }))
+  })
+
   return router
+}
+
+function readString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 function sendValidationError(res: import('express').Response, error: unknown) {

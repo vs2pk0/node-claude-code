@@ -70,3 +70,22 @@ export function getStatsSummary() {
 export function getRecentRequests(limit = 80) {
   return apiFetch<RequestRecord[]>(`/api/stats/requests?limit=${limit}`)
 }
+
+export function resetStats() {
+  return apiFetch<{ deleted: number }>('/api/stats/requests', {
+    method: 'DELETE',
+  })
+}
+
+export function deleteRequestRecord(id: string) {
+  return apiFetch<{ deleted: number }>(`/api/stats/requests/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function deleteModelStats(input: { provider: string; model: string; targetModel: string }) {
+  return apiFetch<{ deleted: number }>('/api/stats/models', {
+    method: 'DELETE',
+    body: JSON.stringify(input),
+  })
+}

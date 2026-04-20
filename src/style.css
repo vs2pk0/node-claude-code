@@ -120,30 +120,71 @@ pre,
   color: #c7d2d6;
 }
 
+.nav .ant-menu-item:hover,
+.nav .ant-menu-item-active {
+  background: #1d2d31 !important;
+  color: #eef7f5 !important;
+}
+
+.nav .ant-menu-item:hover .ant-menu-item-icon,
+.nav .ant-menu-item-active .ant-menu-item-icon,
+.nav .ant-menu-item:hover .ant-menu-title-content,
+.nav .ant-menu-item-active .ant-menu-title-content {
+  color: #eef7f5 !important;
+}
+
 .nav .ant-menu-item-selected {
   background: #2f6f6d !important;
   color: #ffffff !important;
 }
 
+.nav .ant-menu-item-selected .ant-menu-item-icon,
+.nav .ant-menu-item-selected .ant-menu-title-content {
+  color: #ffffff !important;
+}
+
 .side.ant-layout-sider-collapsed .nav .ant-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 48px;
   margin-inline: 12px;
+  padding-inline: 0 !important;
+}
+
+.side.ant-layout-sider-collapsed .nav .ant-menu-item .ant-menu-title-content {
+  display: none;
+}
+
+.side.ant-layout-sider-collapsed .nav .ant-menu-item .ant-menu-item-icon {
+  margin-inline-end: 0;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .sidebar-footer {
   position: absolute;
-  right: 0;
+  right: 8px;
   bottom: 18px;
-  left: 0;
+  left: auto;
   display: flex;
   justify-content: center;
-  padding-inline: 12px;
+  width: 48px;
+}
+
+.sidebar-footer.is-collapsed {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .sidebar-toggle {
-  width: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
   height: 42px;
-  border: 1px solid #4c6b68;
+  border: 0;
   border-radius: 6px;
   color: #d9eeea;
 }
@@ -283,6 +324,18 @@ pre,
   width: 100%;
 }
 
+.api-key-item .ant-form-item-label > label {
+  width: 100%;
+}
+
+.field-label-with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+}
+
 .provider-list {
   border: 1px solid #dce3e6;
   border-radius: 6px;
@@ -310,6 +363,12 @@ pre,
 
 .io-actions {
   margin-bottom: 18px;
+}
+
+.claude-config-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .env-strip {
@@ -349,6 +408,18 @@ pre,
   overflow-x: auto;
 }
 
+.row-delete-button {
+  border-color: #d7dee2;
+  color: #7d8a91;
+}
+
+.row-delete-button:hover,
+.row-delete-button:focus-visible {
+  border-color: #aebbc1 !important;
+  color: #4f5f66 !important;
+  background: #f3f6f7 !important;
+}
+
 .ant-table-cell {
   word-break: break-word;
 }
@@ -386,6 +457,6 @@ pre,
 
 @media (max-width: 991px) {
   .main-shell {
-    margin-left: 0;
+    margin-left: var(--sidebar-width);
   }
 }

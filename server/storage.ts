@@ -54,6 +54,9 @@ export const storage = {
   recordRequest,
   getSummary,
   getRecentRequests,
+  deleteAllRequests,
+  deleteRequest,
+  deleteModelStats,
 }
 
 function getConfig(): AppConfig {
@@ -228,4 +231,35 @@ function getRecentRequests(limit = 50): RequestRecord[] {
     ...row,
     success: Boolean(row.success),
   }))
+}
+
+function deleteAllRequests() {
+  const result = db.prepare('DELETE FROM requests').run()
+  return {
+    deleted: result.changes,
+  }
+}
+
+function deleteRequest(id: string) {
+  const result = db.prepare('DELETE FROM requests WHERE id = ?').run(id)
+  return {
+    deleted: result.changes,
+  }
+}
+
+function deleteModelStats(input: { provider: string; model: string; targetModel: string }) {
+  const result = db
+    .prepare(
+      `
+        DELETE FROM requests
+        WHERE provider = ?
+          AND model = ?
+          AND target_model = ?
+      `,
+    )
+    .run(input.provider, input.model, input.targetModel)
+
+  return {
+    deleted: result.changes,
+  }
 }

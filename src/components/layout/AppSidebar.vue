@@ -80,7 +80,7 @@ function hIcon(component: Component) {
       :inline-collapsed="collapsed"
       :items="menuItems"
     />
-    <div class="sidebar-footer">
+    <div class="sidebar-footer" :class="{ 'is-collapsed': collapsed }">
       <a-tooltip :title="collapsed ? '展开菜单' : '折叠菜单'" placement="right">
         <a-button class="sidebar-toggle" type="text" @click="emit('update:collapsed', !collapsed)">
           <template #icon>

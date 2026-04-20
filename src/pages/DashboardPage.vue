@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import type { TableColumnsType } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
+import { DeleteOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { deleteModelStats, deleteRequestRecord, resetStats } from '@/api'
 import { useAppState } from '@/composables/useAppState'
 import type { RequestRecord, StatsSummary } from '@/types'
-import { formatNumber, formatTime } from '@/utils/format'
+import { formatNumber, formatTime, readError } from '@/utils/format'
 
-const { summary, successRate } = useAppState()
+const { summary, successRate, loadStats } = useAppState()
 
 const requestColumns: TableColumnsType<RequestRecord> = [
   {
@@ -53,6 +56,12 @@ const requestColumns: TableColumnsType<RequestRecord> = [
     width: 94,
     customRender: ({ record }) => (record.success ? '成功' : `失败 ${record.status}`),
   },
+  {
+    title: '操作',
+    key: 'action',
+    width: 86,
+    fixed: 'right',
+  },
 ]
 
 const modelColumns: TableColumnsType<StatsSummary['byModel'][number]> = [
@@ -80,15 +89,61 @@ const modelColumns: TableColumnsType<StatsSummary['byModel'][number]> = [
     customRender: ({ text }) => formatNumber(Number(text)),
   },
   {
-    title: 'Token',
-    dataIndex: 'totalTokens',
+    title: '输入 Token',
+    dataIndex: 'inputTokens',
     width: 120,
     customRender: ({ text }) => formatNumber(Number(text)),
+  },
+  {
+    title: '输出 Token',
+    dataIndex: 'outputTokens',
+    width: 120,
+    customRender: ({ text }) => formatNumber(Number(text)),
+  },
+  {
+    title: '操作',
+    key: 'action',
+    width: 86,
+    fixed: 'right',
   },
 ]
 
 function modelRowKey(record: StatsSummary['byModel'][number]) {
   return `${record.provider}:${record.model}:${record.targetModel}`
+}
+
+async function resetAllStats(label: string) {
+  try {
+    const result = await resetStats()
+    await loadStats()
+    message.success(`${label}已重置，删除 ${formatNumber(result.deleted)} 条记录`)
+  } catch (error) {
+    message.error(readError(error))
+  }
+}
+
+async function removeModelGroup(record: StatsSummary['byModel'][number]) {
+  try {
+    const result = await deleteModelStats({
+      provider: record.provider,
+      model: record.model,
+      targetModel: record.targetModel,
+    })
+    await loadStats()
+    message.success(`已删除 ${formatNumber(result.deleted)} 条统计记录`)
+  } catch (error) {
+    message.error(readError(error))
+  }
+}
+
+async function removeRequest(record: RequestRecord) {
+  try {
+    await deleteRequestRecord(record.id)
+    await loadStats()
+    message.success('请求记录已删除')
+  } catch (error) {
+    message.error(readError(error))
+  }
 }
 </script>
 
@@ -120,17 +175,64 @@ function modelRowKey(record: StatsSummary['byModel'][number]) {
     <div class="data-grid">
       <a-card class="data-card">
         <template #title>模型统计</template>
+        <template #extra>
+          <a-popconfirm
+            title="确认重置模型统计？"
+            description="会删除全部请求统计数据，模型统计和最近请求都会重新计算。"
+            ok-text="确认重置"
+            cancel-text="取消"
+            ok-type="danger"
+            @confirm="resetAllStats('模型统计')"
+          >
+            <a-button danger size="small">
+              <template #icon><ReloadOutlined /></template>
+              重置
+            </a-button>
+          </a-popconfirm>
+        </template>
         <a-table
           size="middle"
           :columns="modelColumns"
           :data-source="summary?.byModel || []"
           :pagination="{ pageSize: 8, size: 'small' }"
-          :scroll="{ x: 740 }"
+          :scroll="{ x: 860 }"
           :row-key="modelRowKey"
-        />
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'action'">
+              <a-popconfirm
+                title="确认删除这组模型统计？"
+                description="会删除匹配该映射模型、实际模型和 Provider 的全部请求记录。"
+                ok-text="确认删除"
+                cancel-text="取消"
+                ok-type="danger"
+                @confirm="removeModelGroup(record)"
+              >
+                <a-button class="row-delete-button" size="small">
+                  <template #icon><DeleteOutlined /></template>
+                </a-button>
+              </a-popconfirm>
+            </template>
+          </template>
+        </a-table>
       </a-card>
       <a-card class="data-card">
         <template #title>最近请求</template>
+        <template #extra>
+          <a-popconfirm
+            title="确认重置最近请求？"
+            description="会删除全部请求统计数据，模型统计和最近请求都会重新计算。"
+            ok-text="确认重置"
+            cancel-text="取消"
+            ok-type="danger"
+            @confirm="resetAllStats('最近请求')"
+          >
+            <a-button danger size="small">
+              <template #icon><ReloadOutlined /></template>
+              重置
+            </a-button>
+          </a-popconfirm>
+        </template>
         <a-table
           size="middle"
           :columns="requestColumns"
@@ -138,7 +240,24 @@ function modelRowKey(record: StatsSummary['byModel'][number]) {
           :pagination="{ pageSize: 8, size: 'small' }"
           :scroll="{ x: 940 }"
           row-key="id"
-        />
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'action'">
+              <a-popconfirm
+                title="确认删除这条请求记录？"
+                description="删除后相关模型统计会重新计算。"
+                ok-text="确认删除"
+                cancel-text="取消"
+                ok-type="danger"
+                @confirm="removeRequest(record)"
+              >
+                <a-button class="row-delete-button" size="small">
+                  <template #icon><DeleteOutlined /></template>
+                </a-button>
+              </a-popconfirm>
+            </template>
+          </template>
+        </a-table>
       </a-card>
     </div>
   </section>
