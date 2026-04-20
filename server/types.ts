@@ -21,6 +21,15 @@ export interface RouterConfig {
   [key: string]: unknown
 }
 
+export interface ConcurrencyConfig {
+  enabled: boolean
+  maxConcurrent: number
+  maxConcurrentPerProvider: number
+  maxQueueSize: number
+  queueTimeoutMs: number
+  [key: string]: unknown
+}
+
 export interface AppConfig {
   LOG: boolean
   LOG_LEVEL: LogLevel
@@ -34,6 +43,7 @@ export interface AppConfig {
   Providers: ProviderConfig[]
   StatusLine: Record<string, unknown>
   Router: RouterConfig
+  Concurrency: ConcurrencyConfig
   CUSTOM_ROUTER_PATH: string
   [key: string]: unknown
 }

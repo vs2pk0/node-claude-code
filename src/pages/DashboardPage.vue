@@ -30,6 +30,7 @@ const requestColumns: TableColumnsType<RequestRecord> = [
   {
     title: '映射模型',
     dataIndex: 'model',
+    key: 'model',
     width: 180,
     ellipsis: true,
   },
@@ -70,6 +71,7 @@ const modelColumns: TableColumnsType<StatsSummary['byModel'][number]> = [
   {
     title: '映射模型',
     dataIndex: 'model',
+    key: 'model',
     width: 180,
     ellipsis: true,
   },
@@ -114,6 +116,14 @@ const modelColumns: TableColumnsType<StatsSummary['byModel'][number]> = [
 
 function modelRowKey(record: StatsSummary['byModel'][number]) {
   return `${record.provider}:${record.model}:${record.targetModel}`
+}
+
+function displayMappedModel(providerName: string, model: string) {
+  return resolveModelAlias(providerName, model)
+}
+
+function hasMappedModelAlias(providerName: string, model: string) {
+  return displayMappedModel(providerName, model) !== model
 }
 
 function displayTargetModel(providerName: string, model: string) {
@@ -219,7 +229,13 @@ async function removeRequest(record: RequestRecord) {
           :row-key="modelRowKey"
         >
           <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'provider'">
+            <template v-if="column.key === 'model'">
+              <a-tooltip v-if="hasMappedModelAlias(record.provider, record.model)" :title="record.model">
+                <span>{{ displayMappedModel(record.provider, record.model) }}</span>
+              </a-tooltip>
+              <span v-else>{{ record.model }}</span>
+            </template>
+            <template v-else-if="column.key === 'provider'">
               <a-tooltip v-if="hasProviderNameAlias(record.provider, record.targetModel)" :title="record.provider">
                 <span>{{ displayProviderName(record.provider, record.targetModel) }}</span>
               </a-tooltip>
@@ -274,7 +290,13 @@ async function removeRequest(record: RequestRecord) {
           row-key="id"
         >
           <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'provider'">
+            <template v-if="column.key === 'model'">
+              <a-tooltip v-if="hasMappedModelAlias(record.provider, record.model)" :title="record.model">
+                <span>{{ displayMappedModel(record.provider, record.model) }}</span>
+              </a-tooltip>
+              <span v-else>{{ record.model }}</span>
+            </template>
+            <template v-else-if="column.key === 'provider'">
               <a-tooltip v-if="hasProviderNameAlias(record.provider, record.targetModel)" :title="record.provider">
                 <span>{{ displayProviderName(record.provider, record.targetModel) }}</span>
               </a-tooltip>

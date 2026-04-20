@@ -74,5 +74,12 @@ export const defaultConfig: AppConfig = {
     webSearch: '',
     image: 'qclaw,modelroute',
   },
+  Concurrency: {
+    enabled: true,
+    maxConcurrent: 4,
+    maxConcurrentPerProvider: 1,
+    maxQueueSize: 64,
+    queueTimeoutMs: 300000,
+  },
   CUSTOM_ROUTER_PATH: '',
 }

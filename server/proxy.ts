@@ -7,6 +7,7 @@ import {
   extractOpenAiContent,
   openAiToAnthropic,
 } from './anthropic.js'
+import { clientClosedError, requestConcurrencyLimiter } from './concurrency.js'
 import { allModels, resolveRoute } from './routing.js'
 import { storage } from './storage.js'
 import { estimateTokens } from './token.js'
@@ -64,6 +65,7 @@ async function handleAnthropicMessages(req: Request, res: Response) {
   const body = req.body as JsonRecord
   const requestedModel = String(body.model ?? '')
   const inputTokens = estimateTokens(body)
+  const clientDisconnect = createClientDisconnectSignal(req, res)
   let decision: RouteDecision | undefined
 
   try {
@@ -72,12 +74,20 @@ async function handleAnthropicMessages(req: Request, res: Response) {
     applyProviderTransformers(payload, decision.provider, decision.targetModel)
 
     if (payload.stream) {
-      await streamAnthropicFromOpenAi(res, config, decision, payload, startedAt, inputTokens, requestedModel)
+      await streamAnthropicFromOpenAi(
+        res,
+        config,
+        decision,
+        payload,
+        startedAt,
+        inputTokens,
+        requestedModel,
+        clientDisconnect.signal,
+      )
       return
     }
 
-    const upstream = await postJson(config, decision, payload)
-    const data = (await upstream.json()) as JsonRecord
+    const { upstream, data } = await postJsonWithConcurrency(config, decision, payload, clientDisconnect.signal)
     const responseBody = openAiToAnthropic(data, requestedModel, decision.targetModel)
     const usage = readAnthropicUsage(responseBody)
 
@@ -101,6 +111,8 @@ async function handleAnthropicMessages(req: Request, res: Response) {
       inputTokens,
       requestedModel,
     })
+  } finally {
+    clientDisconnect.cleanup()
   }
 }
 
@@ -110,6 +122,7 @@ async function handleOpenAiChat(req: Request, res: Response) {
   const body = req.body as JsonRecord
   const requestedModel = String(body.model ?? '')
   const inputTokens = estimateTokens(body.messages ?? body)
+  const clientDisconnect = createClientDisconnectSignal(req, res)
   let decision: RouteDecision | undefined
 
   try {
@@ -121,12 +134,11 @@ async function handleOpenAiChat(req: Request, res: Response) {
     applyProviderTransformers(payload, decision.provider, decision.targetModel)
 
     if (payload.stream) {
-      await streamOpenAi(res, config, decision, payload, startedAt, inputTokens, requestedModel)
+      await streamOpenAi(res, config, decision, payload, startedAt, inputTokens, requestedModel, clientDisconnect.signal)
       return
     }
 
-    const upstream = await postJson(config, decision, payload)
-    const data = (await upstream.json()) as JsonRecord
+    const { upstream, data } = await postJsonWithConcurrency(config, decision, payload, clientDisconnect.signal)
     const usage = readOpenAiUsage(data)
 
     recordRequest({
@@ -149,6 +161,8 @@ async function handleOpenAiChat(req: Request, res: Response) {
       inputTokens,
       requestedModel,
     })
+  } finally {
+    clientDisconnect.cleanup()
   }
 }
 
@@ -160,26 +174,42 @@ async function streamOpenAi(
   startedAt: number,
   inputTokens: number,
   requestedModel: string,
+  signal?: AbortSignal,
 ) {
-  const upstream = await postJson(config, decision, payload)
-  prepareSse(res, upstream.status)
-
   let outputText = ''
-  let status = upstream.status
+  let status = 502
   const decoder = new TextDecoder()
   const parseEvents = createSseParser()
+  let release = noopRelease
+  let upstreamCleanup = noopRelease
 
   try {
+    release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
+    const upstreamRequest = await postJson(config, decision, payload, signal)
+    const upstream = upstreamRequest.upstream
+    upstreamCleanup = upstreamRequest.cleanup
+    status = upstream.status
+    prepareSse(res, upstream.status)
+
     for await (const chunk of streamBody(upstream)) {
       const text = decoder.decode(chunk, { stream: true })
       outputText += collectOpenAiStreamText(parseEvents(text))
       res.write(text)
     }
   } catch (error) {
-    status = 502
-    res.write(`event: error\ndata: ${JSON.stringify({ message: readableError(error) })}\n\n`)
+    status = errorStatus(error, signal)
+    if (!isClientClosed(error, signal) && canWriteResponse(res) && !res.headersSent) {
+      prepareSse(res, status)
+    }
+    if (!isClientClosed(error, signal) && canWriteResponse(res)) {
+      res.write(`event: error\ndata: ${JSON.stringify({ message: readableError(error) })}\n\n`)
+    }
   } finally {
-    res.end()
+    upstreamCleanup()
+    release()
+    if (canWriteResponse(res)) {
+      res.end()
+    }
     recordRequest({
       endpoint: '/v1/chat/completions',
       decision,
@@ -201,40 +231,48 @@ async function streamAnthropicFromOpenAi(
   startedAt: number,
   inputTokens: number,
   requestedModel: string,
+  signal?: AbortSignal,
 ) {
-  const upstream = await postJson(config, decision, payload)
-  prepareSse(res, upstream.status)
-
   const messageId = `msg_${randomUUID().replaceAll('-', '')}`
   let textBlockStarted = false
   let textBlockIndex = -1
   let textOutput = ''
-  let status = upstream.status
+  let status = 502
+  let hadError = false
   const toolBlocks = new Map<number, { blockIndex: number; id: string; name: string; partialJson: string; started: boolean }>()
   const blockCounter = { next: 0 }
   const decoder = new TextDecoder()
   const parseEvents = createSseParser()
-
-  res.write(
-    anthropicSseEvent('message_start', {
-      type: 'message_start',
-      message: {
-        id: messageId,
-        type: 'message',
-        role: 'assistant',
-        model: requestedModel || decision.targetModel,
-        content: [],
-        stop_reason: null,
-        stop_sequence: null,
-        usage: {
-          input_tokens: inputTokens,
-          output_tokens: 0,
-        },
-      },
-    }),
-  )
+  let release = noopRelease
+  let upstreamCleanup = noopRelease
 
   try {
+    release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
+    const upstreamRequest = await postJson(config, decision, payload, signal)
+    const upstream = upstreamRequest.upstream
+    upstreamCleanup = upstreamRequest.cleanup
+    status = upstream.status
+    prepareSse(res, upstream.status)
+
+    res.write(
+      anthropicSseEvent('message_start', {
+        type: 'message_start',
+        message: {
+          id: messageId,
+          type: 'message',
+          role: 'assistant',
+          model: requestedModel || decision.targetModel,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {
+            input_tokens: inputTokens,
+            output_tokens: 0,
+          },
+        },
+      }),
+    )
+
     for await (const chunk of streamBody(upstream)) {
       const text = decoder.decode(chunk, { stream: true })
       const events = parseEvents(text)
@@ -282,18 +320,28 @@ async function streamAnthropicFromOpenAi(
       }
     }
   } catch (error) {
-    status = 502
-    res.write(
-      anthropicSseEvent('error', {
-        type: 'error',
-        error: {
-          type: 'api_error',
-          message: readableError(error),
-        },
-      }),
-    )
+    status = errorStatus(error, signal)
+    hadError = true
+    if (!isClientClosed(error, signal) && canWriteResponse(res) && !res.headersSent) {
+      prepareSse(res, status)
+    }
+    if (!isClientClosed(error, signal) && canWriteResponse(res)) {
+      res.write(
+        anthropicSseEvent('error', {
+          type: 'error',
+          error: {
+            type: 'api_error',
+            message: readableError(error),
+          },
+        }),
+      )
+    }
   } finally {
-    if (textBlockStarted) {
+    upstreamCleanup()
+    release()
+    const outputTokens = estimateTokens(textOutput || [...toolBlocks.values()].map((tool) => tool.partialJson).join('\n'))
+
+    if (textBlockStarted && canWriteResponse(res)) {
       res.write(
         anthropicSseEvent('content_block_stop', {
           type: 'content_block_stop',
@@ -303,7 +351,7 @@ async function streamAnthropicFromOpenAi(
     }
 
     for (const tool of toolBlocks.values()) {
-      if (tool.started) {
+      if (tool.started && canWriteResponse(res)) {
         res.write(
           anthropicSseEvent('content_block_stop', {
             type: 'content_block_stop',
@@ -313,32 +361,35 @@ async function streamAnthropicFromOpenAi(
       }
     }
 
-    const outputTokens = estimateTokens(textOutput || [...toolBlocks.values()].map((tool) => tool.partialJson).join('\n'))
-    res.write(
-      anthropicSseEvent('message_delta', {
-        type: 'message_delta',
-        delta: {
-          stop_reason: toolBlocks.size ? 'tool_use' : 'end_turn',
-          stop_sequence: null,
-        },
-        usage: {
-          output_tokens: outputTokens,
-        },
-      }),
-    )
-    res.write(
-      anthropicSseEvent('message_stop', {
-        type: 'message_stop',
-      }),
-    )
-    res.end()
+    if (!hadError && canWriteResponse(res)) {
+      res.write(
+        anthropicSseEvent('message_delta', {
+          type: 'message_delta',
+          delta: {
+            stop_reason: toolBlocks.size ? 'tool_use' : 'end_turn',
+            stop_sequence: null,
+          },
+          usage: {
+            output_tokens: outputTokens,
+          },
+        }),
+      )
+      res.write(
+        anthropicSseEvent('message_stop', {
+          type: 'message_stop',
+        }),
+      )
+    }
+    if (canWriteResponse(res)) {
+      res.end()
+    }
 
     recordRequest({
       endpoint: '/v1/messages',
       decision,
       startedAt,
       status,
-      success: status >= 200 && status < 300,
+      success: !hadError && status >= 200 && status < 300,
       inputTokens,
       outputTokens,
       requestedModel,
@@ -346,9 +397,31 @@ async function streamAnthropicFromOpenAi(
   }
 }
 
-async function postJson(config: AppConfig, decision: RouteDecision, payload: JsonRecord) {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs(config))
+async function postJsonWithConcurrency(
+  config: AppConfig,
+  decision: RouteDecision,
+  payload: JsonRecord,
+  signal?: AbortSignal,
+) {
+  const release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
+  try {
+    const upstreamRequest = await postJson(config, decision, payload, signal)
+    try {
+      const data = (await upstreamRequest.upstream.json()) as JsonRecord
+      return {
+        upstream: upstreamRequest.upstream,
+        data,
+      }
+    } finally {
+      upstreamRequest.cleanup()
+    }
+  } finally {
+    release()
+  }
+}
+
+async function postJson(config: AppConfig, decision: RouteDecision, payload: JsonRecord, signal?: AbortSignal) {
+  const upstreamAbort = createUpstreamAbort(config, signal)
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }
@@ -358,15 +431,58 @@ async function postJson(config: AppConfig, decision: RouteDecision, payload: Jso
   }
 
   try {
-    return await fetch(decision.provider.api_base_url, {
+    const upstream = await fetch(decision.provider.api_base_url, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
-      signal: controller.signal,
+      signal: upstreamAbort.signal,
       dispatcher: dispatcher(config),
     } as RequestInit & { dispatcher?: ProxyAgent })
-  } finally {
-    clearTimeout(timeout)
+    return {
+      upstream,
+      cleanup: upstreamAbort.cleanup,
+    }
+  } catch (error) {
+    const reason = upstreamAbort.signal.reason
+    upstreamAbort.cleanup()
+    if (upstreamAbort.signal.aborted && reason instanceof Error) {
+      throw reason
+    }
+    throw error
+  }
+}
+
+function createUpstreamAbort(config: AppConfig, signal?: AbortSignal) {
+  const controller = new AbortController()
+  const abortWithClientSignal = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(signal?.reason ?? clientClosedError())
+    }
+  }
+  if (signal?.aborted) {
+    abortWithClientSignal()
+  } else {
+    signal?.addEventListener('abort', abortWithClientSignal, { once: true })
+  }
+
+  const timeout = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      controller.abort(upstreamTimeoutError())
+    }
+  }, timeoutMs(config))
+  let cleaned = false
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (cleaned) {
+        return
+      }
+
+      cleaned = true
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abortWithClientSignal)
+    },
   }
 }
 
@@ -389,12 +505,41 @@ function isAuthorized(req: Request, config: AppConfig) {
   return bearer === config.APIKEY || apiKey === config.APIKEY
 }
 
+function createClientDisconnectSignal(req: Request, res: Response) {
+  const controller = new AbortController()
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(clientClosedError())
+    }
+  }
+  const abortIfResponseClosedEarly = () => {
+    if (!res.writableEnded) {
+      abort()
+    }
+  }
+
+  req.once('aborted', abort)
+  res.once('close', abortIfResponseClosedEarly)
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      req.off('aborted', abort)
+      res.off('close', abortIfResponseClosedEarly)
+    },
+  }
+}
+
 function prepareSse(res: Response, status: number) {
   res.status(status)
   res.setHeader('content-type', 'text/event-stream; charset=utf-8')
   res.setHeader('cache-control', 'no-cache, no-transform')
   res.setHeader('connection', 'keep-alive')
   res.flushHeaders()
+}
+
+function canWriteResponse(res: Response) {
+  return !res.destroyed && !res.writableEnded
 }
 
 async function* streamBody(response: globalThis.Response): AsyncGenerator<Uint8Array> {
@@ -461,6 +606,10 @@ function handleProxyError(
     requestedModel: context.requestedModel,
     error: message,
   })
+
+  if (res.headersSent || !canWriteResponse(res)) {
+    return
+  }
 
   res.status(status).json({
     error: {
@@ -614,9 +763,33 @@ function asRecord(value: unknown): JsonRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {}
 }
 
+function errorStatus(error: unknown, signal?: AbortSignal) {
+  if (isClientClosed(error, signal)) {
+    return 499
+  }
+
+  return typeof (error as { status?: unknown }).status === 'number' ? (error as { status: number }).status : 502
+}
+
+function isClientClosed(error: unknown, signal?: AbortSignal) {
+  return isClientClosedError(error) || isClientClosedError(signal?.reason)
+}
+
+function isClientClosedError(error: unknown) {
+  return (error as { code?: unknown }).code === 'CLIENT_CLOSED_REQUEST'
+}
+
+function upstreamTimeoutError() {
+  const error = new Error('Upstream request timed out') as Error & { status?: number }
+  error.status = 504
+  return error
+}
+
 function readableError(error: unknown) {
   if (error instanceof Error) {
     return error.name === 'AbortError' ? 'Upstream request timed out' : error.message
   }
   return String(error)
 }
+
+function noopRelease() {}

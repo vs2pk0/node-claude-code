@@ -178,5 +178,43 @@ function randomBase64Url(byteLength: number) {
         </div>
       </a-form>
     </a-card>
+
+    <a-card class="tool-card">
+      <template #title>并发控制</template>
+      <a-form layout="vertical">
+        <div class="form-grid">
+          <a-form-item label="启用排队">
+            <a-switch v-model:checked="draft.Concurrency.enabled" />
+          </a-form-item>
+          <a-form-item label="全局最大并发">
+            <a-input-number v-model:value="draft.Concurrency.maxConcurrent" :min="1" :max="64" class="full-input" />
+          </a-form-item>
+          <a-form-item label="单 Provider 最大并发">
+            <a-input-number
+              v-model:value="draft.Concurrency.maxConcurrentPerProvider"
+              :min="1"
+              :max="32"
+              class="full-input"
+            />
+          </a-form-item>
+          <a-form-item label="最大排队数">
+            <a-input-number
+              v-model:value="draft.Concurrency.maxQueueSize"
+              :min="1"
+              :max="10000"
+              class="full-input"
+            />
+          </a-form-item>
+          <a-form-item label="队列超时 ms">
+            <a-input-number
+              v-model:value="draft.Concurrency.queueTimeoutMs"
+              :min="1000"
+              :step="1000"
+              class="full-input"
+            />
+          </a-form-item>
+        </div>
+      </a-form>
+    </a-card>
   </section>
 </template>

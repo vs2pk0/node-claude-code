@@ -26,6 +26,16 @@ const routerSchema = z
   })
   .passthrough()
 
+const concurrencySchema = z
+  .object({
+    enabled: z.coerce.boolean().default(true),
+    maxConcurrent: z.coerce.number().int().positive().default(4),
+    maxConcurrentPerProvider: z.coerce.number().int().positive().default(1),
+    maxQueueSize: z.coerce.number().int().positive().default(64),
+    queueTimeoutMs: z.coerce.number().int().positive().default(300000),
+  })
+  .passthrough()
+
 export const configSchema = z
   .object({
     LOG: z.coerce.boolean().default(true),
@@ -40,6 +50,13 @@ export const configSchema = z
     Providers: z.array(providerSchema).default([]),
     StatusLine: z.record(z.string(), z.unknown()).default({}),
     Router: routerSchema,
+    Concurrency: concurrencySchema.default({
+      enabled: true,
+      maxConcurrent: 4,
+      maxConcurrentPerProvider: 1,
+      maxQueueSize: 64,
+      queueTimeoutMs: 300000,
+    }),
     CUSTOM_ROUTER_PATH: z.string().default(''),
   })
   .passthrough()
