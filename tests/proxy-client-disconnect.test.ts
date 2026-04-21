@@ -300,6 +300,272 @@ test('claude code forward sends Anthropic payload and returns upstream response 
   assert.deepEqual(upstreamRequest.body.messages, [{ role: 'user', content: 'hello' }])
 })
 
+test('provider api key sequence rotates keys and records the selected key', async () => {
+  resetUpstreamState()
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    APIKEY: '',
+    Providers: [
+      {
+        name: 'multi-key-llmapi',
+        api_base_url: `${upstreamUrl}/v1/messages`,
+        api_key: '',
+        api_keys: ['key-one', 'key-two'],
+        api_key_names: ['主 Key', ''],
+        api_key_strategy: 'sequence',
+        models: ['claude-opus-4-7'],
+        claude_code_forward: true,
+      },
+    ],
+    Router: {
+      ...current.Router,
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: ['multi-key-llmapi,claude-opus-4-7'],
+        strategy: 'sequence',
+        delayMs: 0,
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
+    },
+    Concurrency: {
+      enabled: true,
+      maxConcurrent: 1,
+      maxConcurrentPerProvider: 1,
+      maxQueueSize: 4,
+      queueTimeoutMs: 5000,
+    },
+  })
+
+  for (let index = 0; index < 2; index += 1) {
+    const response = await fetch(`${proxyUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: `hello ${index}` }],
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    await response.json()
+  }
+
+  assert.equal(upstreamState.requests.length, 2)
+  assert.equal(upstreamState.requests[0].headers['x-api-key'], 'key-one')
+  assert.equal(upstreamState.requests[1].headers['x-api-key'], 'key-two')
+
+  const recent = storage.getSummary().recent.filter((record: { provider: string }) => record.provider === 'multi-key-llmapi')
+  assert.equal(recent.length, 2)
+  assert.equal(recent[0].apiKey, 'key-two')
+  assert.equal(recent[1].apiKey, '主 Key')
+})
+
+test('disabled provider api keys are skipped when selecting upstream credentials', async () => {
+  resetUpstreamState()
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    APIKEY: '',
+    Providers: [
+      {
+        name: 'disabled-key-llmapi',
+        api_base_url: `${upstreamUrl}/v1/messages`,
+        api_key: '',
+        api_keys: ['disabled-key', 'enabled-key'],
+        api_key_names: ['停用 Key', '可用 Key'],
+        api_key_disabled: [true, false],
+        api_key_strategy: 'sequence',
+        models: ['claude-opus-4-7'],
+        claude_code_forward: true,
+      },
+    ],
+    Router: {
+      ...current.Router,
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: ['disabled-key-llmapi,claude-opus-4-7'],
+        strategy: 'sequence',
+        delayMs: 0,
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
+    },
+    Concurrency: {
+      enabled: true,
+      maxConcurrent: 1,
+      maxConcurrentPerProvider: 1,
+      maxQueueSize: 4,
+      queueTimeoutMs: 5000,
+    },
+  })
+
+  for (let index = 0; index < 2; index += 1) {
+    const response = await fetch(`${proxyUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: `enabled only ${index}` }],
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    await response.json()
+  }
+
+  assert.deepEqual(
+    upstreamState.requests.map((request) => request.headers['x-api-key']),
+    ['enabled-key', 'enabled-key'],
+  )
+
+  const recent = storage.getSummary().recent.filter((record: { provider: string }) => record.provider === 'disabled-key-llmapi')
+  assert.equal(recent.length, 2)
+  assert.deepEqual(
+    recent.map((record: { apiKey: string }) => record.apiKey),
+    ['可用 Key', '可用 Key'],
+  )
+})
+
+test('route sequence and provider api key sequence advance independently', async () => {
+  resetUpstreamState()
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    APIKEY: '',
+    Providers: [
+      {
+        name: 'sequence-provider-a',
+        api_base_url: `${upstreamUrl}/v1/messages`,
+        api_key: '',
+        api_keys: ['a-one', 'a-two'],
+        api_key_names: ['A1', 'A2'],
+        api_key_strategy: 'sequence',
+        models: ['claude-opus-a'],
+        claude_code_forward: true,
+      },
+      {
+        name: 'sequence-provider-b',
+        api_base_url: `${upstreamUrl}/v1/messages`,
+        api_key: '',
+        api_keys: ['b-one', 'b-two'],
+        api_key_names: ['B1', 'B2'],
+        api_key_strategy: 'sequence',
+        models: ['claude-opus-b'],
+        claude_code_forward: true,
+      },
+    ],
+    Router: {
+      ...current.Router,
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: ['sequence-provider-a,claude-opus-a', 'sequence-provider-b,claude-opus-b'],
+        strategy: 'sequence',
+        delayMs: 0,
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
+    },
+    Concurrency: {
+      enabled: true,
+      maxConcurrent: 1,
+      maxConcurrentPerProvider: 1,
+      maxQueueSize: 4,
+      queueTimeoutMs: 5000,
+    },
+  })
+
+  for (let index = 0; index < 4; index += 1) {
+    const response = await fetch(`${proxyUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: `sequence ${index}` }],
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    await response.json()
+  }
+
+  assert.deepEqual(
+    upstreamState.requests.map((request) => request.body.model),
+    ['claude-opus-a', 'claude-opus-b', 'claude-opus-a', 'claude-opus-b'],
+  )
+  assert.deepEqual(
+    upstreamState.requests.map((request) => request.headers['x-api-key']),
+    ['a-one', 'b-one', 'a-two', 'b-two'],
+  )
+
+  const recent = storage
+    .getSummary()
+    .recent.filter((record: { provider: string }) => record.provider.startsWith('sequence-provider-'))
+    .map((record: { provider: string; apiKey: string }) => `${record.provider}:${record.apiKey}`)
+    .sort()
+  assert.deepEqual(recent, [
+    'sequence-provider-a:A1',
+    'sequence-provider-a:A2',
+    'sequence-provider-b:B1',
+    'sequence-provider-b:B2',
+  ])
+})
+
 test('claude code forward starts raw response before upstream body ends', async () => {
   resetUpstreamState()
   const current = storage.getConfig()

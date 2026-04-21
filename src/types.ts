@@ -6,6 +6,10 @@ export interface ProviderConfig {
   name: string
   api_base_url: string
   api_key: string
+  api_keys: string[]
+  api_key_names: string[]
+  api_key_disabled: boolean[]
+  api_key_strategy: RouterStrategy
   models: string[]
   model_aliases?: Record<string, string>
   model_formats?: Record<string, ModelFormatMode>
@@ -77,6 +81,7 @@ export interface RequestRecord {
   createdAt: string
   endpoint: string
   provider: string
+  apiKey: string
   model: string
   targetModel: string
   routeKey: string

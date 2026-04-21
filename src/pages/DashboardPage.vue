@@ -28,6 +28,14 @@ const requestColumns: TableColumnsType<RequestRecord> = [
     width: 120,
   },
   {
+    title: 'Key',
+    dataIndex: 'apiKey',
+    key: 'apiKey',
+    width: 150,
+    ellipsis: true,
+    customRender: ({ text }) => String(text || '-'),
+  },
+  {
     title: '映射模型',
     dataIndex: 'model',
     key: 'model',
@@ -272,7 +280,7 @@ async function removeRequest(record: RequestRecord) {
           :columns="requestColumns"
           :data-source="summary?.recent || []"
           :pagination="{ pageSize: 8, size: 'small' }"
-          :scroll="{ x: 940 }"
+          :scroll="{ x: 1090 }"
           row-key="id"
         >
           <template #bodyCell="{ column, record }">

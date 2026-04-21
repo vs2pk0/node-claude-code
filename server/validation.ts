@@ -3,12 +3,17 @@ import type { AppConfig } from './types.js'
 
 const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']).catch('info')
 const modelFormatModeSchema = z.enum(['default', 'claude-code']).catch('default')
+const routeStrategySchema = z.enum(['sequence', 'loadBalance', 'random']).catch('sequence')
 
 const providerSchema = z
   .object({
     name: z.string().trim().min(1, 'Provider name is required'),
     api_base_url: z.string().trim().min(1, 'Provider API base URL is required'),
     api_key: z.string().default(''),
+    api_keys: z.array(z.string()).default([]),
+    api_key_names: z.array(z.string()).default([]),
+    api_key_disabled: z.array(z.coerce.boolean()).default([]),
+    api_key_strategy: routeStrategySchema.default('sequence'),
     models: z.array(z.string().trim().min(1)).default([]),
     model_aliases: z.record(z.string(), z.string()).optional(),
     model_formats: z.record(z.string(), modelFormatModeSchema).optional(),
@@ -16,8 +21,21 @@ const providerSchema = z
     transformer: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough()
-
-const routeStrategySchema = z.enum(['sequence', 'loadBalance', 'random']).catch('sequence')
+  .transform((provider) => {
+    const apiKeyEntries = normalizeApiKeyEntries(
+      provider.api_keys,
+      provider.api_key_names,
+      provider.api_key_disabled,
+      provider.api_key,
+    )
+    return {
+      ...provider,
+      api_key: apiKeyEntries.keys.find((_, index) => !apiKeyEntries.disabled[index]) ?? '',
+      api_keys: apiKeyEntries.keys,
+      api_key_names: apiKeyEntries.names,
+      api_key_disabled: apiKeyEntries.disabled,
+    }
+  })
 
 function routerRuleSchema(defaultModel: string) {
   return z
@@ -134,4 +152,37 @@ export function parseConfig(input: unknown): AppConfig {
 
 export function parseConfigJson(text: string): AppConfig {
   return parseConfig(JSON.parse(text))
+}
+
+function normalizeApiKeyEntries(
+  apiKeys: string[],
+  apiKeyNames: string[],
+  apiKeyDisabled: boolean[],
+  legacyApiKey: string,
+) {
+  const seen = new Set<string>()
+  const keys: string[] = []
+  const names: string[] = []
+  const disabled: boolean[] = []
+
+  for (let index = 0; index < apiKeys.length; index += 1) {
+    const key = apiKeys[index].trim()
+    if (!key || seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    keys.push(key)
+    names.push(apiKeyNames[index]?.trim() ?? '')
+    disabled.push(apiKeyDisabled[index] === true)
+  }
+
+  const legacyKey = legacyApiKey.trim()
+  if (legacyKey && !seen.has(legacyKey)) {
+    keys.push(legacyKey)
+    names.push('')
+    disabled.push(false)
+  }
+
+  return { keys, names, disabled }
 }

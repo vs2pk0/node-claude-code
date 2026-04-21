@@ -12,7 +12,7 @@ import { allModels, resolveRoute } from './routing.js'
 import { storage } from './storage.js'
 import { estimateTokens } from './token.js'
 import { applyProviderTransformers } from './transformers.js'
-import type { AppConfig, RequestRecordInput, RouteDecision } from './types.js'
+import type { AppConfig, RequestRecordInput, RouteDecision, RouterStrategy } from './types.js'
 
 type JsonRecord = Record<string, unknown>
 type UpstreamPayloadFormat = 'openai' | 'claude-code'
@@ -21,6 +21,21 @@ interface PostJsonOptions {
   format?: UpstreamPayloadFormat
   headers?: Record<string, string>
 }
+
+interface SelectedApiKey {
+  value: string
+  label: string
+  release: () => void
+}
+
+interface ProviderApiKeyEntry {
+  key: string
+  name: string
+  disabled: boolean
+}
+
+const apiKeySequenceByProvider = new Map<string, number>()
+const activeApiKeys = new Map<string, number>()
 
 export function createProxyRouter() {
   const router = Router()
@@ -108,7 +123,7 @@ async function handleAnthropicMessages(req: Request, res: Response) {
       return
     }
 
-    const { upstream, data } = await postJsonWithConcurrency(config, decision, payload, clientDisconnect.signal)
+    const { upstream, data, apiKey } = await postJsonWithConcurrency(config, decision, payload, clientDisconnect.signal)
     const responseBody = openAiToAnthropic(data, requestedModel, decision.targetModel)
     const usage = readAnthropicUsage(responseBody)
 
@@ -121,6 +136,7 @@ async function handleAnthropicMessages(req: Request, res: Response) {
       inputTokens: usage.inputTokens || inputTokens,
       outputTokens: usage.outputTokens || estimateTokens(responseBody),
       requestedModel,
+      apiKey,
     })
 
     res.status(upstream.status).json(upstream.ok ? responseBody : data)
@@ -159,7 +175,7 @@ async function handleOpenAiChat(req: Request, res: Response) {
       return
     }
 
-    const { upstream, data } = await postJsonWithConcurrency(config, decision, payload, clientDisconnect.signal)
+    const { upstream, data, apiKey } = await postJsonWithConcurrency(config, decision, payload, clientDisconnect.signal)
     const usage = readOpenAiUsage(data)
 
     recordRequest({
@@ -171,6 +187,7 @@ async function handleOpenAiChat(req: Request, res: Response) {
       inputTokens: usage.inputTokens || inputTokens,
       outputTokens: usage.outputTokens || estimateTokens(data),
       requestedModel,
+      apiKey,
     })
 
     res.status(upstream.status).json(data)
@@ -229,6 +246,7 @@ async function streamOpenAi(
 ) {
   let outputText = ''
   let status = 502
+  let apiKey = ''
   const decoder = new TextDecoder()
   const parseEvents = createSseParser()
   let release = noopRelease
@@ -240,6 +258,7 @@ async function streamOpenAi(
     const upstreamRequest = await postJson(config, decision, payload, signal)
     const upstream = upstreamRequest.upstream
     upstreamCleanup = upstreamRequest.cleanup
+    apiKey = upstreamRequest.apiKey
     status = upstream.status
     prepareSse(res, upstream.status)
 
@@ -250,6 +269,7 @@ async function streamOpenAi(
     }
   } catch (error) {
     status = errorStatus(error, signal)
+    apiKey ||= readErrorApiKey(error)
     if (!isClientClosed(error, signal) && canWriteResponse(res) && !res.headersSent) {
       prepareSse(res, status)
     }
@@ -271,6 +291,7 @@ async function streamOpenAi(
       inputTokens,
       outputTokens: estimateTokens(outputText),
       requestedModel,
+      apiKey,
     })
   }
 }
@@ -291,6 +312,7 @@ async function streamAnthropicFromOpenAi(
   let textOutput = ''
   let status = 502
   let hadError = false
+  let apiKey = ''
   const toolBlocks = new Map<number, { blockIndex: number; id: string; name: string; partialJson: string; started: boolean }>()
   const blockCounter = { next: 0 }
   const decoder = new TextDecoder()
@@ -304,6 +326,7 @@ async function streamAnthropicFromOpenAi(
     const upstreamRequest = await postJson(config, decision, payload, signal)
     const upstream = upstreamRequest.upstream
     upstreamCleanup = upstreamRequest.cleanup
+    apiKey = upstreamRequest.apiKey
     status = upstream.status
     prepareSse(res, upstream.status)
 
@@ -375,6 +398,7 @@ async function streamAnthropicFromOpenAi(
   } catch (error) {
     status = errorStatus(error, signal)
     hadError = true
+    apiKey ||= readErrorApiKey(error)
     if (!isClientClosed(error, signal) && canWriteResponse(res) && !res.headersSent) {
       prepareSse(res, status)
     }
@@ -446,6 +470,7 @@ async function streamAnthropicFromOpenAi(
       inputTokens,
       outputTokens,
       requestedModel,
+      apiKey,
     })
   }
 }
@@ -464,6 +489,7 @@ async function forwardClaudeCodeRaw(
   const isStream = payload.stream === true
   let status = 502
   let hadError = false
+  let apiKey = ''
   let release = noopRelease
   let upstreamCleanup = noopRelease
   const decoder = new TextDecoder()
@@ -480,6 +506,7 @@ async function forwardClaudeCodeRaw(
     const upstreamRequest = await postJson(config, decision, payload, signal, options)
     const upstream = upstreamRequest.upstream
     upstreamCleanup = upstreamRequest.cleanup
+    apiKey = upstreamRequest.apiKey
     status = upstream.status
     res.status(upstream.status)
     copyUpstreamResponseHeaders(
@@ -517,6 +544,7 @@ async function forwardClaudeCodeRaw(
   } catch (error) {
     status = errorStatus(error, signal)
     hadError = true
+    apiKey ||= readErrorApiKey(error)
     if (!isClientClosed(error, signal) && canWriteResponse(res) && !res.headersSent) {
       if (isStream) {
         prepareSse(res, status)
@@ -555,6 +583,7 @@ async function forwardClaudeCodeRaw(
       inputTokens: usage.inputTokens || inputTokens,
       outputTokens: usage.outputTokens,
       requestedModel,
+      apiKey,
     })
   }
 }
@@ -575,7 +604,10 @@ async function postJsonWithConcurrency(
       return {
         upstream: upstreamRequest.upstream,
         data,
+        apiKey: upstreamRequest.apiKey,
       }
+    } catch (error) {
+      throw withApiKey(error, upstreamRequest.apiKey)
     } finally {
       upstreamRequest.cleanup()
     }
@@ -592,16 +624,17 @@ async function postJson(
   options: PostJsonOptions = {},
 ) {
   const upstreamAbort = createUpstreamAbort(config, signal)
+  const selectedApiKey = selectProviderApiKey(decision)
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }
 
-  if (decision.provider.api_key) {
+  if (selectedApiKey.value) {
     if (options.format === 'claude-code') {
-      headers['x-api-key'] = decision.provider.api_key
-      headers.authorization = `Bearer ${decision.provider.api_key}`
+      headers['x-api-key'] = selectedApiKey.value
+      headers.authorization = `Bearer ${selectedApiKey.value}`
     } else {
-      headers.authorization = `Bearer ${decision.provider.api_key}`
+      headers.authorization = `Bearer ${selectedApiKey.value}`
     }
   }
 
@@ -622,16 +655,157 @@ async function postJson(
     } as RequestInit & { dispatcher?: ProxyAgent })
     return {
       upstream,
-      cleanup: upstreamAbort.cleanup,
+      apiKey: selectedApiKey.label,
+      cleanup: () => {
+        upstreamAbort.cleanup()
+        selectedApiKey.release()
+      },
     }
   } catch (error) {
     const reason = upstreamAbort.signal.reason
     upstreamAbort.cleanup()
+    selectedApiKey.release()
     if (upstreamAbort.signal.aborted && reason instanceof Error) {
-      throw reason
+      throw withApiKey(reason, selectedApiKey.label)
     }
-    throw error
+    throw withApiKey(error, selectedApiKey.label)
   }
+}
+
+function selectProviderApiKey(decision: RouteDecision): SelectedApiKey {
+  const entries = readProviderApiKeyEntries(decision.provider).filter((entry) => !entry.disabled)
+  if (!entries.length) {
+    return {
+      value: '',
+      label: '',
+      release: noopRelease,
+    }
+  }
+
+  const strategy = normalizeApiKeyStrategy(decision.provider.api_key_strategy)
+  const index = selectApiKeyIndex(decision.providerName, entries, strategy)
+  const entry = entries[index] ?? entries[0]
+  const value = entry.key
+  const activeKey = providerApiKeyActiveKey(decision.providerName, index, value)
+  activeApiKeys.set(activeKey, (activeApiKeys.get(activeKey) ?? 0) + 1)
+
+  let released = false
+  return {
+    value,
+    label: formatApiKeyLabel(entry),
+    release: () => {
+      if (released) {
+        return
+      }
+
+      released = true
+      const nextActive = Math.max(0, (activeApiKeys.get(activeKey) ?? 0) - 1)
+      if (nextActive) {
+        activeApiKeys.set(activeKey, nextActive)
+      } else {
+        activeApiKeys.delete(activeKey)
+      }
+    },
+  }
+}
+
+function readProviderApiKeyEntries(provider: RouteDecision['provider']) {
+  const rawKeys = Array.isArray(provider.api_keys) ? provider.api_keys : []
+  const rawNames = Array.isArray(provider.api_key_names) ? provider.api_key_names : []
+  const rawDisabled = Array.isArray(provider.api_key_disabled) ? provider.api_key_disabled : []
+  return uniqueApiKeyEntries(rawKeys, rawNames, rawDisabled, provider.api_key)
+}
+
+function selectApiKeyIndex(providerName: string, entries: ProviderApiKeyEntry[], strategy: RouterStrategy) {
+  if (entries.length <= 1) {
+    return 0
+  }
+
+  if (strategy === 'random') {
+    return Math.floor(Math.random() * entries.length)
+  }
+
+  if (strategy === 'loadBalance') {
+    let bestIndex = 0
+    let bestActive = Number.POSITIVE_INFINITY
+    entries.forEach((entry, index) => {
+      const active = activeApiKeys.get(providerApiKeyActiveKey(providerName, index, entry.key)) ?? 0
+      if (active < bestActive) {
+        bestActive = active
+        bestIndex = index
+      }
+    })
+    return bestIndex
+  }
+
+  const cursor = apiKeySequenceByProvider.get(providerName) ?? 0
+  const index = cursor % entries.length
+  apiKeySequenceByProvider.set(providerName, (index + 1) % entries.length)
+  return index
+}
+
+function normalizeApiKeyStrategy(strategy: unknown): RouterStrategy {
+  return strategy === 'loadBalance' || strategy === 'random' ? strategy : 'sequence'
+}
+
+function providerApiKeyActiveKey(providerName: string, index: number, key: string) {
+  return `${providerName}:${index}:${key}`
+}
+
+function formatApiKeyLabel(entry: ProviderApiKeyEntry) {
+  return entry.name || entry.key
+}
+
+function uniqueApiKeyEntries(
+  keys: Array<unknown>,
+  names: Array<unknown>,
+  disabledValues: Array<unknown>,
+  legacyApiKey: unknown,
+) {
+  const seen = new Set<string>()
+  const result: ProviderApiKeyEntry[] = []
+
+  keys.forEach((value, index) => {
+    if (typeof value !== 'string') {
+      return
+    }
+
+    const key = value.trim()
+    if (!key || seen.has(key)) {
+      return
+    }
+
+    const name = typeof names[index] === 'string' ? names[index].trim() : ''
+    const disabled = disabledValues[index] === true
+    seen.add(key)
+    result.push({ key, name, disabled })
+  })
+
+  if (typeof legacyApiKey === 'string') {
+    const key = legacyApiKey.trim()
+    if (key && !seen.has(key)) {
+      result.push({ key, name: '', disabled: false })
+    }
+  }
+
+  return result
+}
+
+function withApiKey(error: unknown, apiKey: string) {
+  if (apiKey && error && typeof error === 'object') {
+    const apiKeyError = error as { apiKey?: string }
+    apiKeyError.apiKey = apiKey
+  }
+  return error
+}
+
+function readErrorApiKey(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return ''
+  }
+
+  const apiKey = (error as { apiKey?: unknown }).apiKey
+  return typeof apiKey === 'string' ? apiKey : ''
 }
 
 function resolveUpstreamUrl(apiBaseUrl: string, format: UpstreamPayloadFormat = 'openai') {
@@ -837,12 +1011,14 @@ function recordRequest(input: {
   inputTokens: number
   outputTokens: number
   requestedModel: string
+  apiKey?: string
   error?: string
 }) {
   const decision = input.decision
   const record: RequestRecordInput = {
     endpoint: input.endpoint,
     provider: decision?.providerName ?? 'unknown',
+    apiKey: input.apiKey ?? '',
     model: input.requestedModel || decision?.targetModel || 'unknown',
     targetModel: decision?.targetModel ?? 'unknown',
     routeKey: decision?.routeKey ?? 'unknown',
@@ -880,6 +1056,7 @@ function handleProxyError(
     inputTokens: context.inputTokens,
     outputTokens: 0,
     requestedModel: context.requestedModel,
+    apiKey: readErrorApiKey(error),
     error: message,
   })
 

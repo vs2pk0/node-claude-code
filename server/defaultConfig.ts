@@ -15,6 +15,10 @@ export const defaultConfig: AppConfig = {
       name: 'qclaw',
       api_base_url: 'http://127.0.0.1:19000/proxy/llm/chat/completions',
       api_key: '',
+      api_keys: [],
+      api_key_names: [],
+      api_key_disabled: [],
+      api_key_strategy: 'sequence',
       models: [
         'modelroute',
         'claude-sonnet-4-20250514',
@@ -39,6 +43,10 @@ export const defaultConfig: AppConfig = {
       name: 'baishan',
       api_base_url: 'https://api.edgefn.net/v1/chat/completions',
       api_key: '',
+      api_keys: [],
+      api_key_names: [],
+      api_key_disabled: [],
+      api_key_strategy: 'sequence',
       models: ['MiniMax-M2.5', 'GLM-5'],
       transformer: {
         use: ['maxtoken'],

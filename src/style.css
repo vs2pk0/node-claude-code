@@ -469,6 +469,53 @@ pre,
   grid-column: 1 / -1;
 }
 
+.provider-keys-form-item {
+  grid-column: 1 / -1;
+}
+
+.provider-key-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.provider-key-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(180px, 0.8fr) 58px 34px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.provider-key-row.is-disabled .ant-input,
+.provider-key-row.is-disabled .ant-input-password {
+  background: #f5f7f8;
+  color: #7d8a91;
+}
+
+.key-disable-button {
+  width: 58px;
+  padding-inline: 0;
+  color: #5c6a70;
+}
+
+.key-disable-button:hover,
+.key-disable-button:focus-visible {
+  border-color: #9fb0b7 !important;
+  color: #26343a !important;
+}
+
+.provider-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.provider-key-strategy {
+  width: 132px;
+}
+
 .model-row-list {
   display: grid;
   gap: 8px;
@@ -615,6 +662,14 @@ pre,
 
   .model-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .provider-key-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .provider-key-strategy {
+    width: 100%;
   }
 }
 

@@ -178,6 +178,59 @@ test('provider format settings are normalized with default fallback', () => {
   assert.equal(config.Providers[0].model_formats?.m2, 'default')
 })
 
+test('provider api keys are normalized from legacy and multi-key settings', () => {
+  const legacyConfig = parseConfig({
+    ...defaultConfig,
+    Providers: [
+      {
+        ...provider('legacy-provider', ['legacy-model']),
+        api_key: ' legacy-key ',
+      },
+    ],
+  })
+  const multiKeyConfig = parseConfig({
+    ...defaultConfig,
+    Providers: [
+      {
+        ...provider('multi-key-provider', ['multi-model']),
+        api_key: 'key-two',
+        api_keys: ['key-one', ' ', 'key-two', 'key-one'],
+        api_key_strategy: 'random',
+      },
+    ],
+  })
+
+  assert.equal(legacyConfig.Providers[0].api_key, 'legacy-key')
+  assert.deepEqual(legacyConfig.Providers[0].api_keys, ['legacy-key'])
+  assert.deepEqual(legacyConfig.Providers[0].api_key_names, [''])
+  assert.deepEqual(legacyConfig.Providers[0].api_key_disabled, [false])
+  assert.equal(legacyConfig.Providers[0].api_key_strategy, 'sequence')
+  assert.equal(multiKeyConfig.Providers[0].api_key, 'key-one')
+  assert.deepEqual(multiKeyConfig.Providers[0].api_keys, ['key-one', 'key-two'])
+  assert.deepEqual(multiKeyConfig.Providers[0].api_key_names, ['', ''])
+  assert.deepEqual(multiKeyConfig.Providers[0].api_key_disabled, [false, false])
+  assert.equal(multiKeyConfig.Providers[0].api_key_strategy, 'random')
+})
+
+test('provider api key metadata stays aligned with normalized keys', () => {
+  const config = parseConfig({
+    ...defaultConfig,
+    Providers: [
+      {
+        ...provider('named-key-provider', ['named-model']),
+        api_keys: ['key-one', ' ', 'key-two', 'key-one'],
+        api_key_names: ['主 Key', 'ignored blank key', '备用 Key', 'duplicate ignored'],
+        api_key_disabled: [true, false, false, false],
+      },
+    ],
+  })
+
+  assert.deepEqual(config.Providers[0].api_keys, ['key-one', 'key-two'])
+  assert.deepEqual(config.Providers[0].api_key_names, ['主 Key', '备用 Key'])
+  assert.deepEqual(config.Providers[0].api_key_disabled, [true, false])
+  assert.equal(config.Providers[0].api_key, 'key-two')
+})
+
 test('ui settings default to showing model conflict warnings', () => {
   const legacyInput = JSON.parse(JSON.stringify(defaultConfig)) as Record<string, unknown>
   delete legacyInput.UI

@@ -2,7 +2,7 @@ import { computed, reactive, ref } from 'vue'
 import type { UploadProps } from 'ant-design-vue'
 import { message } from 'ant-design-vue'
 import { exportConfig, getConfig, getHealth, getStatsSummary, importConfig, saveConfig, type HealthPayload } from '@/api'
-import type { AppConfig, ModelFormatMode, ProviderConfig, StatsSummary } from '@/types'
+import type { AppConfig, ModelFormatMode, ProviderConfig, RouterStrategy, StatsSummary } from '@/types'
 import { readError } from '@/utils/format'
 
 export interface ProviderEditorState {
@@ -208,6 +208,10 @@ function addProvider() {
     name: `provider-${draft.value.Providers.length + 1}`,
     api_base_url: '',
     api_key: '',
+    api_keys: [''],
+    api_key_names: [''],
+    api_key_disabled: [false],
+    api_key_strategy: 'sequence',
     models: ['model-name'],
     model_aliases: {},
     model_formats: {},
@@ -236,6 +240,10 @@ function importProviderFromCurl(curlText: string) {
     name: uniqueProviderName(parsed.name),
     api_base_url: parsed.apiBaseUrl,
     api_key: parsed.apiKey,
+    api_keys: parsed.apiKey ? [parsed.apiKey] : [],
+    api_key_names: parsed.apiKey ? [''] : [],
+    api_key_disabled: parsed.apiKey ? [false] : [],
+    api_key_strategy: 'sequence',
     models: [parsed.model],
     model_aliases: {},
     model_formats: parsed.claudeCodeForward ? { [parsed.model]: 'claude-code' } : {},
@@ -272,6 +280,7 @@ function copyProvider(index: number) {
   const copiedProvider: ProviderConfig = {
     ...deepClone(provider),
     name: `${provider.name || `provider-${index + 1}`}-${formatTimestamp(new Date())}`,
+    ...materializeProviderApiKeys(provider),
     models: modelEntries.models,
     model_aliases: modelEntries.aliases,
     model_formats: modelEntries.formats,
@@ -301,6 +310,50 @@ function removeProviderModel(providerIndex: number, modelIndex: number) {
   editor.models.splice(modelIndex, 1)
 }
 
+function addProviderApiKey(providerIndex: number) {
+  const provider = draft.value?.Providers[providerIndex]
+  if (!provider) {
+    return
+  }
+
+  ensureProviderApiKeyRows(provider)
+  provider.api_keys!.push('')
+  provider.api_key_names!.push('')
+  provider.api_key_disabled!.push(false)
+}
+
+function removeProviderApiKey(providerIndex: number, keyIndex: number) {
+  const provider = draft.value?.Providers[providerIndex]
+  if (!provider) {
+    return
+  }
+
+  ensureProviderApiKeyRows(provider)
+  if ((provider.api_keys?.length ?? 0) <= 1) {
+    provider.api_keys = ['']
+    provider.api_key_names = ['']
+    provider.api_key_disabled = [false]
+    provider.api_key = ''
+    return
+  }
+
+  provider.api_keys!.splice(keyIndex, 1)
+  provider.api_key_names!.splice(keyIndex, 1)
+  provider.api_key_disabled!.splice(keyIndex, 1)
+  provider.api_key = materializeProviderApiKeys(provider).api_key
+}
+
+function toggleProviderApiKeyDisabled(providerIndex: number, keyIndex: number) {
+  const provider = draft.value?.Providers[providerIndex]
+  if (!provider) {
+    return
+  }
+
+  ensureProviderApiKeyRows(provider)
+  provider.api_key_disabled![keyIndex] = !provider.api_key_disabled![keyIndex]
+  provider.api_key = materializeProviderApiKeys(provider).api_key
+}
+
 function removeProvider(index: number) {
   draft.value?.Providers.splice(index, 1)
   syncProviderEditors()
@@ -310,7 +363,16 @@ function providerStatus(provider: ProviderConfig) {
   if (!provider.api_base_url) {
     return '未配置'
   }
-  return provider.api_key ? '就绪' : '缺少 Key'
+  const entries = readProviderApiKeyEntries(provider)
+  if (!entries.length) {
+    return '缺少 Key'
+  }
+
+  return entries.some((entry) => !entry.disabled) ? '就绪' : 'Key 已停用'
+}
+
+function providerApiKeyRowCount(provider: ProviderConfig) {
+  return readProviderApiKeyRows(provider).length
 }
 
 function modelAliasConflictsForProvider(providerIndex: number) {
@@ -378,6 +440,7 @@ function resolveProviderName(providerName: string, model = '') {
 }
 
 function syncProviderEditors() {
+  draft.value?.Providers.forEach(ensureProviderApiKeyRows)
   providerEditors.value =
     draft.value?.Providers.map((provider) => ({
       models: createModelEditorRows(provider),
@@ -396,6 +459,7 @@ function materializeDraft(): AppConfig | undefined {
       const modelEntries = materializeModelRows(editor?.models ?? [])
       return {
         ...provider,
+        ...materializeProviderApiKeys(provider),
         models: modelEntries.models,
         model_aliases: modelEntries.aliases,
         model_formats: modelEntries.formats,
@@ -419,6 +483,7 @@ function previewDraft() {
     ...draft.value,
     Providers: draft.value.Providers.map((provider, index) => ({
       ...provider,
+      ...safePreviewProviderApiKeys(provider),
       ...safePreviewModelPayload(providerEditors.value[index]?.models ?? []),
       transformer: safePreviewTransformer(providerEditors.value[index]?.transformerText ?? ''),
     })),
@@ -449,6 +514,76 @@ function safePreviewTransformer(text: string): Record<string, unknown> | undefin
   } catch {
     return {}
   }
+}
+
+function materializeProviderApiKeys(provider: ProviderConfig) {
+  const entries = readProviderApiKeyEntries(provider)
+  const apiKeys = entries.map((entry) => entry.key)
+  const apiKeyNames = entries.map((entry) => entry.name)
+  const apiKeyDisabled = entries.map((entry) => entry.disabled)
+  return {
+    api_key: entries.find((entry) => !entry.disabled)?.key ?? '',
+    api_keys: apiKeys,
+    api_key_names: apiKeyNames,
+    api_key_disabled: apiKeyDisabled,
+    api_key_strategy: normalizeRouterStrategy(provider.api_key_strategy),
+  }
+}
+
+function safePreviewProviderApiKeys(provider: ProviderConfig) {
+  return materializeProviderApiKeys(provider)
+}
+
+function ensureProviderApiKeyRows(provider: ProviderConfig) {
+  const keys = readProviderApiKeyRows(provider)
+  provider.api_keys = keys
+  provider.api_key_names = readProviderApiKeyNameRows(provider, keys.length)
+  provider.api_key_disabled = readProviderApiKeyDisabledRows(provider, keys.length)
+  provider.api_key = readProviderApiKeyEntries(provider).find((entry) => !entry.disabled)?.key ?? ''
+  provider.api_key_strategy = normalizeRouterStrategy(provider.api_key_strategy)
+}
+
+function readProviderApiKeyRows(provider: ProviderConfig) {
+  const rows = Array.isArray(provider.api_keys) ? provider.api_keys.map((key) => String(key)) : []
+  if (rows.length) {
+    return rows
+  }
+
+  return provider.api_key ? [provider.api_key] : ['']
+}
+
+function readProviderApiKeyNameRows(provider: ProviderConfig, count: number) {
+  const names = Array.isArray(provider.api_key_names) ? provider.api_key_names.map((name) => String(name)) : []
+  return Array.from({ length: count }, (_, index) => names[index] ?? '')
+}
+
+function readProviderApiKeyDisabledRows(provider: ProviderConfig, count: number) {
+  const disabled = Array.isArray(provider.api_key_disabled) ? provider.api_key_disabled.map(Boolean) : []
+  return Array.from({ length: count }, (_, index) => disabled[index] ?? false)
+}
+
+function readProviderApiKeyEntries(provider: ProviderConfig) {
+  const keys = readProviderApiKeyRows(provider)
+  const names = readProviderApiKeyNameRows(provider, keys.length)
+  const disabled = readProviderApiKeyDisabledRows(provider, keys.length)
+  const seen = new Set<string>()
+  const entries: Array<{ key: string; name: string; disabled: boolean }> = []
+
+  keys.forEach((value, index) => {
+    const key = value.trim()
+    if (!key || seen.has(key)) {
+      return
+    }
+
+    seen.add(key)
+    entries.push({
+      key,
+      name: names[index]?.trim() ?? '',
+      disabled: disabled[index] === true,
+    })
+  })
+
+  return entries
 }
 
 function materializeModelRows(rows: ProviderModelEditorState[]) {
@@ -617,6 +752,10 @@ function readModelFormat(provider: ProviderConfig, model: string): ModelFormatMo
 
 function normalizeModelFormat(format: unknown): ModelFormatMode {
   return format === 'claude-code' ? 'claude-code' : defaultModelFormat
+}
+
+function normalizeRouterStrategy(strategy: unknown): RouterStrategy {
+  return strategy === 'loadBalance' || strategy === 'random' ? strategy : 'sequence'
 }
 
 function parseCurlProvider(curlText: string) {
@@ -866,8 +1005,12 @@ export function useAppState() {
     copyProvider,
     addProviderModel,
     removeProviderModel,
+    addProviderApiKey,
+    removeProviderApiKey,
+    toggleProviderApiKeyDisabled,
     removeProvider,
     providerStatus,
+    providerApiKeyRowCount,
     modelAliasConflictsForProvider,
     findModelAliasConflict,
     resolveModelAlias,

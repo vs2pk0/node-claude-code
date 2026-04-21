@@ -4,7 +4,7 @@ import type { TableColumnsType } from 'ant-design-vue'
 import { CopyOutlined, DeleteOutlined, ImportOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { useAppState } from '@/composables/useAppState'
-import type { ModelFormatMode, ProviderConfig } from '@/types'
+import type { ModelFormatMode, ProviderConfig, RouterStrategy } from '@/types'
 import { readError } from '@/utils/format'
 
 const {
@@ -15,8 +15,12 @@ const {
   copyProvider,
   addProviderModel,
   removeProviderModel,
+  addProviderApiKey,
+  removeProviderApiKey,
+  toggleProviderApiKeyDisabled,
   removeProvider,
   providerStatus,
+  providerApiKeyRowCount,
   modelConflictWarningsEnabled,
   modelAliasConflictsForProvider,
   findModelAliasConflict,
@@ -36,6 +40,11 @@ let providerKeySeed = 0
 const modelFormatOptions: Array<{ label: string; value: ModelFormatMode }> = [
   { label: '默认格式', value: 'default' },
   { label: 'Claude Code 直转', value: 'claude-code' },
+]
+const keyStrategyOptions: Array<{ label: string; value: RouterStrategy }> = [
+  { label: '按顺序', value: 'sequence' },
+  { label: '负载平衡', value: 'loadBalance' },
+  { label: '随机调用', value: 'random' },
 ]
 
 const providerRows = computed<ProviderRow[]>(() => {
@@ -232,8 +241,51 @@ function providerStableKey(provider: ProviderConfig) {
               <a-form-item label="API Base URL">
                 <a-input v-model:value="record.provider.api_base_url" />
               </a-form-item>
-              <a-form-item label="API Key">
-                <a-input-password v-model:value="record.provider.api_key" autocomplete="new-password" />
+              <a-form-item label="API Key" class="provider-keys-form-item">
+                <div class="provider-key-list">
+                  <div
+                    v-for="(_, keyIndex) in record.provider.api_keys"
+                    :key="`${record.key}-key-${keyIndex}`"
+                    class="provider-key-row"
+                    :class="{ 'is-disabled': record.provider.api_key_disabled[keyIndex] }"
+                  >
+                    <a-input-password
+                      v-model:value="record.provider.api_keys[keyIndex]"
+                      autocomplete="new-password"
+                      placeholder="API Key"
+                    />
+                    <a-input
+                      v-model:value="record.provider.api_key_names[keyIndex]"
+                      placeholder="备注名（可不填）"
+                    />
+                    <a-button
+                      class="key-disable-button"
+                      size="small"
+                      @click="toggleProviderApiKeyDisabled(record.index, keyIndex)"
+                    >
+                      {{ record.provider.api_key_disabled[keyIndex] ? '启用' : '停用' }}
+                    </a-button>
+                    <a-button
+                      class="row-delete-button"
+                      size="small"
+                      @click="removeProviderApiKey(record.index, keyIndex)"
+                    >
+                      <template #icon><DeleteOutlined /></template>
+                    </a-button>
+                  </div>
+                  <div class="provider-key-actions">
+                    <a-button size="small" @click="addProviderApiKey(record.index)">
+                      <template #icon><PlusOutlined /></template>
+                      添加 Key
+                    </a-button>
+                    <a-select
+                      v-if="providerApiKeyRowCount(record.provider) > 1"
+                      v-model:value="record.provider.api_key_strategy"
+                      class="provider-key-strategy"
+                      :options="keyStrategyOptions"
+                    />
+                  </div>
+                </div>
               </a-form-item>
               <a-form-item label="转发 Claude Code">
                 <a-switch v-model:checked="record.provider.claude_code_forward" />

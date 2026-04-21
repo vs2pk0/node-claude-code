@@ -46,6 +46,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_requests_provider_model ON requests(provider, model);
 `)
 
+ensureRequestColumn('api_key', "TEXT NOT NULL DEFAULT ''")
+
 export const storage = {
   dataDir,
   settingsPath,
@@ -98,20 +100,22 @@ function recordRequest(input: RequestRecordInput): RequestRecord {
   const createdAt = new Date().toISOString()
   const totalTokens = input.inputTokens + input.outputTokens
   const id = randomUUID()
+  const apiKey = input.apiKey ?? ''
 
   db.prepare(
     `
       INSERT INTO requests (
-        id, created_at, endpoint, provider, model, target_model, route_key,
+        id, created_at, endpoint, provider, api_key, model, target_model, route_key,
         status, success, latency_ms, input_tokens, output_tokens, total_tokens, error
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     id,
     createdAt,
     input.endpoint,
     input.provider,
+    apiKey,
     input.model,
     input.targetModel,
     input.routeKey,
@@ -126,6 +130,7 @@ function recordRequest(input: RequestRecordInput): RequestRecord {
 
   return {
     ...input,
+    apiKey,
     id,
     createdAt,
     totalTokens,
@@ -226,6 +231,7 @@ function getRecentRequests(limit = 200): RequestRecord[] {
           created_at AS createdAt,
           endpoint,
           provider,
+          api_key AS apiKey,
           model,
           target_model AS targetModel,
           route_key AS routeKey,
@@ -247,6 +253,15 @@ function getRecentRequests(limit = 200): RequestRecord[] {
     ...row,
     success: Boolean(row.success),
   }))
+}
+
+function ensureRequestColumn(column: string, definition: string) {
+  const columns = db.prepare('PRAGMA table_info(requests)').all() as Array<{ name: string }>
+  if (columns.some((existing) => existing.name === column)) {
+    return
+  }
+
+  db.exec(`ALTER TABLE requests ADD COLUMN ${column} ${definition}`)
 }
 
 function deleteAllRequests() {
