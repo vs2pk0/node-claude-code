@@ -10,6 +10,7 @@ interface QueueLimits {
 
 interface QueueItem {
   providerKey: string
+  targetKey: string
   limits: QueueLimits
   resolve: (release: () => void) => void
   timeout: NodeJS.Timeout
@@ -24,6 +25,7 @@ interface AcquireOptions {
 export class ConcurrencyLimiter {
   private active = 0
   private activeByProvider = new Map<string, number>()
+  private activeByTarget = new Map<string, number>()
   private queue: QueueItem[] = []
 
   acquire(config: AppConfig, decision: RouteDecision, options: AcquireOptions = {}): Promise<() => void> {
@@ -37,8 +39,9 @@ export class ConcurrencyLimiter {
     }
 
     const providerKey = decision.providerName || decision.provider.name
+    const targetKey = routeTargetKey(providerKey, decision.targetModel)
     if (this.canStart(providerKey, limits)) {
-      return Promise.resolve(this.start(providerKey))
+      return Promise.resolve(this.start(providerKey, targetKey))
     }
 
     if (this.queue.length >= limits.maxQueueSize) {
@@ -68,6 +71,7 @@ export class ConcurrencyLimiter {
 
       item = {
         providerKey,
+        targetKey,
         limits,
         resolve: (release) => {
           if (settled) {
@@ -95,9 +99,18 @@ export class ConcurrencyLimiter {
     return this.active < limits.maxConcurrent && activeForProvider < limits.maxConcurrentPerProvider
   }
 
-  private start(providerKey: string) {
+  activeTargetCount(providerName: string, targetModel: string) {
+    return this.activeByTarget.get(routeTargetKey(providerName, targetModel)) ?? 0
+  }
+
+  activeProviderCount(providerName: string) {
+    return this.activeByProvider.get(providerName) ?? 0
+  }
+
+  private start(providerKey: string, targetKey: string) {
     this.active += 1
     this.activeByProvider.set(providerKey, (this.activeByProvider.get(providerKey) ?? 0) + 1)
+    this.activeByTarget.set(targetKey, (this.activeByTarget.get(targetKey) ?? 0) + 1)
 
     let released = false
     return () => {
@@ -113,6 +126,14 @@ export class ConcurrencyLimiter {
       } else {
         this.activeByProvider.delete(providerKey)
       }
+
+      const activeForTarget = Math.max(0, (this.activeByTarget.get(targetKey) ?? 0) - 1)
+      if (activeForTarget) {
+        this.activeByTarget.set(targetKey, activeForTarget)
+      } else {
+        this.activeByTarget.delete(targetKey)
+      }
+
       this.drain()
     }
   }
@@ -126,7 +147,7 @@ export class ConcurrencyLimiter {
 
       this.queue.splice(index, 1)
       index -= 1
-      item.resolve(this.start(item.providerKey))
+      item.resolve(this.start(item.providerKey, item.targetKey))
     }
   }
 
@@ -167,6 +188,10 @@ function readLimits(config: AppConfig): QueueLimits {
 function positiveInteger(value: unknown, fallback: number) {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) && numberValue > 0 ? Math.floor(numberValue) : fallback
+}
+
+function routeTargetKey(providerName: string, targetModel: string) {
+  return `${providerName},${targetModel}`
 }
 
 function queueTimeoutError(timeoutMs: number) {

@@ -164,11 +164,27 @@ function configureProxy(
     ],
     Router: {
       ...current.Router,
-      default: `${providerName},${model}`,
-      background: '',
-      think: '',
-      longContext: '',
-      image: '',
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: [`${providerName},${model}`],
+        strategy: 'sequence',
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
     },
     Concurrency: {
       enabled: true,

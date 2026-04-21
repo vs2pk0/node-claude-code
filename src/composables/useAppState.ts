@@ -34,7 +34,7 @@ const routeOptions = computed(() => {
     draft.value?.Providers.flatMap((provider, index) =>
       readEditableModelRows(provider, index).map(({ model, alias }) => {
         return {
-          label: alias && alias !== model ? `${provider.name},${alias} (${model})` : `${provider.name},${model}`,
+          label: `${provider.name},${alias || model}`,
           value: `${provider.name},${model}`,
         }
       }),

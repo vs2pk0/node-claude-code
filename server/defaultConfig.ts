@@ -66,13 +66,33 @@ export const defaultConfig: AppConfig = {
     },
   },
   Router: {
-    default: 'qclaw,claude-opus-4-20250514',
-    background: 'qclaw,modelroute',
-    think: 'qclaw,modelroute',
-    longContext: 'qclaw,modelroute',
+    default: {
+      model: 'claude-sonnet-4-6',
+      targets: ['qclaw,claude-opus-4-20250514'],
+      strategy: 'sequence',
+    },
+    background: {
+      model: 'claude-haiku-4-5-20251001',
+      targets: ['qclaw,modelroute'],
+      strategy: 'sequence',
+    },
+    think: {
+      model: 'claude-opus-4-7',
+      targets: ['qclaw,modelroute'],
+      strategy: 'sequence',
+    },
+    longContext: {
+      model: 'claude-sonnet-4-6',
+      targets: ['qclaw,modelroute'],
+      strategy: 'sequence',
+    },
     longContextThreshold: 60000,
     webSearch: '',
-    image: 'qclaw,modelroute',
+    image: {
+      model: 'claude-sonnet-4-6',
+      targets: ['qclaw,modelroute'],
+      strategy: 'sequence',
+    },
   },
   Concurrency: {
     enabled: true,

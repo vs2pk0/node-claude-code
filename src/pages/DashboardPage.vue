@@ -122,16 +122,8 @@ function displayMappedModel(providerName: string, model: string) {
   return resolveModelAlias(providerName, model)
 }
 
-function hasMappedModelAlias(providerName: string, model: string) {
-  return displayMappedModel(providerName, model) !== model
-}
-
 function displayTargetModel(providerName: string, model: string) {
   return resolveModelAlias(providerName, model)
-}
-
-function hasTargetModelAlias(providerName: string, model: string) {
-  return displayTargetModel(providerName, model) !== model
 }
 
 function displayProviderName(providerName: string, model: string) {
@@ -230,10 +222,7 @@ async function removeRequest(record: RequestRecord) {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'model'">
-              <a-tooltip v-if="hasMappedModelAlias(record.provider, record.model)" :title="record.model">
-                <span>{{ displayMappedModel(record.provider, record.model) }}</span>
-              </a-tooltip>
-              <span v-else>{{ record.model }}</span>
+              <span>{{ displayMappedModel(record.provider, record.model) }}</span>
             </template>
             <template v-else-if="column.key === 'provider'">
               <a-tooltip v-if="hasProviderNameAlias(record.provider, record.targetModel)" :title="record.provider">
@@ -242,10 +231,7 @@ async function removeRequest(record: RequestRecord) {
               <span v-else>{{ record.provider }}</span>
             </template>
             <template v-else-if="column.key === 'targetModel'">
-              <a-tooltip v-if="hasTargetModelAlias(record.provider, record.targetModel)" :title="record.targetModel">
-                <span>{{ displayTargetModel(record.provider, record.targetModel) }}</span>
-              </a-tooltip>
-              <span v-else>{{ record.targetModel }}</span>
+              <span>{{ displayTargetModel(record.provider, record.targetModel) }}</span>
             </template>
             <template v-else-if="column.key === 'action'">
               <a-popconfirm
@@ -291,10 +277,7 @@ async function removeRequest(record: RequestRecord) {
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'model'">
-              <a-tooltip v-if="hasMappedModelAlias(record.provider, record.model)" :title="record.model">
-                <span>{{ displayMappedModel(record.provider, record.model) }}</span>
-              </a-tooltip>
-              <span v-else>{{ record.model }}</span>
+              <span>{{ displayMappedModel(record.provider, record.model) }}</span>
             </template>
             <template v-else-if="column.key === 'provider'">
               <a-tooltip v-if="hasProviderNameAlias(record.provider, record.targetModel)" :title="record.provider">
@@ -303,10 +286,7 @@ async function removeRequest(record: RequestRecord) {
               <span v-else>{{ record.provider }}</span>
             </template>
             <template v-else-if="column.key === 'targetModel'">
-              <a-tooltip v-if="hasTargetModelAlias(record.provider, record.targetModel)" :title="record.targetModel">
-                <span>{{ displayTargetModel(record.provider, record.targetModel) }}</span>
-              </a-tooltip>
-              <span v-else>{{ record.targetModel }}</span>
+              <span>{{ displayTargetModel(record.provider, record.targetModel) }}</span>
             </template>
             <template v-else-if="column.key === 'action'">
               <a-popconfirm

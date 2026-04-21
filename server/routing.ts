@@ -1,7 +1,12 @@
 import { estimateTokens } from './token.js'
-import type { AppConfig, ProviderConfig, RouteDecision } from './types.js'
+import { requestConcurrencyLimiter } from './concurrency.js'
+import type { AppConfig, ProviderConfig, RouteDecision, RouterConfig, RouterRuleConfig } from './types.js'
 
 type RouterRouteKey = 'default' | 'background' | 'think' | 'longContext' | 'image'
+type RouteTarget = { provider: string; model: string }
+
+const routeKeys: RouterRouteKey[] = ['default', 'background', 'think', 'longContext', 'image']
+const routeCursorByKey = new Map<string, number>()
 
 export function resolveRoute(config: AppConfig, body: Record<string, unknown>): RouteDecision {
   const requestedModel = String(body.model ?? '')
@@ -9,6 +14,21 @@ export function resolveRoute(config: AppConfig, body: Record<string, unknown>): 
 
   if (directTarget) {
     return resolveTarget(config, directTarget.provider, directTarget.model, 'model')
+  }
+
+  const priorityRouteKey = choosePriorityRouteKey(config, body)
+  if (priorityRouteKey) {
+    return resolveRouterRule(config, priorityRouteKey)
+  }
+
+  const routeModelKey = findRouteKeyByModel(config.Router, requestedModel)
+  if (routeModelKey) {
+    return resolveRouterRule(config, routeModelKey)
+  }
+
+  const routeTargetKey = findRouteKeyByTargetModel(config, requestedModel)
+  if (routeTargetKey) {
+    return resolveRouterRule(config, routeTargetKey)
   }
 
   const providerByModel = findProviderByModel(config.Providers, requestedModel)
@@ -21,24 +41,37 @@ export function resolveRoute(config: AppConfig, body: Record<string, unknown>): 
     }
   }
 
-  const routeKey = chooseRouteKey(config, body)
-  const targetValue = String(config.Router[routeKey] || config.Router.default || '')
-  const target = parseTarget(targetValue)
-  if (!target) {
-    throw httpError(400, `Router.${routeKey} is empty or invalid`)
-  }
-
-  return resolveTarget(config, target.provider, target.model, routeKey)
+  const routeKey = chooseFallbackRouteKey(config, body)
+  return resolveRouterRule(config, routeKey)
 }
 
 export function allModels(config: AppConfig) {
-  return config.Providers.flatMap((provider) =>
+  const routeModels = routeKeys
+    .map((routeKey) => config.Router[routeKey])
+    .filter((rule) => rule.model)
+    .map((rule) => ({
+      id: rule.model,
+      object: 'model',
+      owned_by: 'router',
+    }))
+
+  const providerModels = config.Providers.flatMap((provider) =>
     provider.models.map((model) => ({
       id: model,
       object: 'model',
       owned_by: provider.name,
     })),
   )
+
+  const seen = new Set<string>()
+  return [...routeModels, ...providerModels].filter((model) => {
+    if (seen.has(model.id)) {
+      return false
+    }
+
+    seen.add(model.id)
+    return true
+  })
 }
 
 export function httpError(status: number, message: string) {
@@ -47,28 +80,117 @@ export function httpError(status: number, message: string) {
   return error
 }
 
-function chooseRouteKey(config: AppConfig, body: Record<string, unknown>): RouterRouteKey {
+function choosePriorityRouteKey(config: AppConfig, body: Record<string, unknown>): RouterRouteKey | undefined {
   const inputTokens = estimateTokens(body.messages)
   const threshold = config.Router.longContextThreshold
 
-  if (hasImage(body.messages) && config.Router.image) {
+  if (hasImage(body.messages) && hasRouterTargets(config.Router.image)) {
     return 'image'
   }
 
-  if (threshold > 0 && inputTokens >= threshold && config.Router.longContext) {
+  if (threshold > 0 && inputTokens >= threshold && hasRouterTargets(config.Router.longContext)) {
     return 'longContext'
   }
 
+  return undefined
+}
+
+function chooseFallbackRouteKey(config: AppConfig, body: Record<string, unknown>): RouterRouteKey {
   const model = String(body.model ?? '').toLowerCase()
-  if ((model.includes('think') || model.includes('reason')) && config.Router.think) {
+  if ((model.includes('think') || model.includes('reason')) && hasRouterTargets(config.Router.think)) {
     return 'think'
   }
 
-  if ((model.includes('haiku') || model.includes('small') || model.includes('fast')) && config.Router.background) {
+  if ((model.includes('haiku') || model.includes('small') || model.includes('fast')) && hasRouterTargets(config.Router.background)) {
     return 'background'
   }
 
   return 'default'
+}
+
+function findRouteKeyByModel(router: RouterConfig, model: string): RouterRouteKey | undefined {
+  if (!model.trim()) {
+    return undefined
+  }
+
+  return routeKeys.find((routeKey) => {
+    const rule = router[routeKey]
+    return rule.model === model && hasRouterTargets(rule)
+  })
+}
+
+function resolveRouterRule(config: AppConfig, routeKey: RouterRouteKey): RouteDecision {
+  const rule = config.Router[routeKey]
+  const targets = rule.targets.map(parseTarget).filter((target): target is RouteTarget => Boolean(target))
+  if (!targets.length) {
+    throw httpError(400, `Router.${routeKey}.targets is empty or invalid`)
+  }
+
+  const target = selectTarget(routeKey, rule, targets)
+  return resolveTarget(config, target.provider, target.model, routeKey)
+}
+
+function findRouteKeyByTargetModel(config: AppConfig, model: string): RouterRouteKey | undefined {
+  if (!model.trim()) {
+    return undefined
+  }
+
+  return routeKeys.find((routeKey) => {
+    const rule = config.Router[routeKey]
+    if (!hasRouterTargets(rule)) {
+      return false
+    }
+
+    return rule.targets.some((targetValue) => {
+      const target = parseTarget(targetValue)
+      return target ? routeTargetMatchesModel(config, target, model) : false
+    })
+  })
+}
+
+function routeTargetMatchesModel(config: AppConfig, target: RouteTarget, model: string) {
+  if (target.model === model) {
+    return true
+  }
+
+  const provider = config.Providers.find((item) => item.name === target.provider)
+  return provider?.model_aliases?.[target.model] === model
+}
+
+function selectTarget(
+  routeKey: RouterRouteKey,
+  rule: RouterRuleConfig,
+  targets: RouteTarget[],
+): RouteTarget {
+  if (rule.strategy === 'random') {
+    return targets[Math.floor(Math.random() * targets.length)]
+  }
+
+  if (rule.strategy === 'loadBalance') {
+    return [...targets]
+      .map((target, index) => ({
+        target,
+        index,
+        targetActive: requestConcurrencyLimiter.activeTargetCount(target.provider, target.model),
+        providerActive: requestConcurrencyLimiter.activeProviderCount(target.provider),
+      }))
+      .sort((left, right) => {
+        return (
+          left.targetActive - right.targetActive ||
+          left.providerActive - right.providerActive ||
+          left.index - right.index
+        )
+      })[0].target
+  }
+
+  const cursorKey = `${routeKey}:${rule.model}:${targets.map((target) => `${target.provider},${target.model}`).join('|')}`
+  const cursor = routeCursorByKey.get(cursorKey) ?? 0
+  routeCursorByKey.set(cursorKey, cursor + 1)
+  return targets[cursor % targets.length]
+}
+
+function hasRouterTargets(rule: RouterRuleConfig) {
+  return rule.targets.some((target) => Boolean(parseTarget(target)))
 }
 
 function resolveTarget(config: AppConfig, providerName: string, model: string, routeKey: string): RouteDecision {

@@ -67,7 +67,7 @@ export function getStatsSummary() {
   return apiFetch<StatsSummary>('/api/stats/summary')
 }
 
-export function getRecentRequests(limit = 80) {
+export function getRecentRequests(limit = 200) {
   return apiFetch<RequestRecord[]>(`/api/stats/requests?limit=${limit}`)
 }
 

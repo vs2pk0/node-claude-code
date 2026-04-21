@@ -14,15 +14,59 @@ const providerSchema = z
   })
   .passthrough()
 
+const routeStrategySchema = z.enum(['sequence', 'loadBalance', 'random']).catch('sequence')
+
+function routerRuleSchema(defaultModel: string) {
+  return z
+    .preprocess((input) => {
+      if (typeof input === 'string') {
+        return {
+          model: defaultModel,
+          targets: input.trim() ? [input] : [],
+          strategy: 'sequence',
+        }
+      }
+
+      if (input && typeof input === 'object' && !Array.isArray(input)) {
+        const record = input as Record<string, unknown>
+        const targets = Array.isArray(record.targets)
+          ? record.targets
+          : typeof record.target === 'string'
+            ? [record.target]
+            : []
+        return {
+          ...record,
+          targets,
+        }
+      }
+
+      return {
+        model: defaultModel,
+        targets: [],
+        strategy: 'sequence',
+      }
+    }, z
+      .object({
+        model: z.string().trim().default(defaultModel),
+        targets: z.array(z.string().trim().min(1)).default([]),
+        strategy: routeStrategySchema.default('sequence'),
+      })
+      .passthrough())
+    .transform((rule) => ({
+      ...rule,
+      model: rule.model || defaultModel,
+    }))
+}
+
 const routerSchema = z
   .object({
-    default: z.string().default(''),
-    background: z.string().default(''),
-    think: z.string().default(''),
-    longContext: z.string().default(''),
+    default: routerRuleSchema('claude-sonnet-4-6'),
+    background: routerRuleSchema('claude-haiku-4-5-20251001'),
+    think: routerRuleSchema('claude-opus-4-7'),
+    longContext: routerRuleSchema('claude-sonnet-4-6'),
     longContextThreshold: z.coerce.number().int().nonnegative().default(60000),
     webSearch: z.string().default(''),
-    image: z.string().default(''),
+    image: routerRuleSchema('claude-sonnet-4-6'),
   })
   .passthrough()
 

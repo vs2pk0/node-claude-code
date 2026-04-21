@@ -1,4 +1,5 @@
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+export type RouterStrategy = 'sequence' | 'loadBalance' | 'random'
 
 export interface ProviderConfig {
   name: string
@@ -10,14 +11,21 @@ export interface ProviderConfig {
   [key: string]: unknown
 }
 
+export interface RouterRuleConfig {
+  model: string
+  targets: string[]
+  strategy: RouterStrategy
+  [key: string]: unknown
+}
+
 export interface RouterConfig {
-  default: string
-  background: string
-  think: string
-  longContext: string
+  default: RouterRuleConfig
+  background: RouterRuleConfig
+  think: RouterRuleConfig
+  longContext: RouterRuleConfig
   longContextThreshold: number
   webSearch: string
-  image: string
+  image: RouterRuleConfig
   [key: string]: unknown
 }
 

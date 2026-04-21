@@ -196,11 +196,11 @@ function getSummary(): StatsSummary {
     },
     byProvider,
     byModel,
-    recent: getRecentRequests(12),
+    recent: getRecentRequests(200),
   }
 }
 
-function getRecentRequests(limit = 50): RequestRecord[] {
+function getRecentRequests(limit = 200): RequestRecord[] {
   type RequestRow = Omit<RequestRecord, 'success'> & { success: number }
 
   const rows = db
