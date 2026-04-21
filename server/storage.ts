@@ -133,6 +133,8 @@ function recordRequest(input: RequestRecordInput): RequestRecord {
 }
 
 function getSummary(): StatsSummary {
+  const config = getConfig()
+  const tokenSums = summaryTokenSums(config.Stats.excludeFailedTokens)
   const totals = db
     .prepare(
       `
@@ -140,9 +142,9 @@ function getSummary(): StatsSummary {
           COUNT(*) AS requests,
           SUM(success) AS success,
           SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failed,
-          COALESCE(SUM(input_tokens), 0) AS inputTokens,
-          COALESCE(SUM(output_tokens), 0) AS outputTokens,
-          COALESCE(SUM(total_tokens), 0) AS totalTokens,
+          ${tokenSums.input} AS inputTokens,
+          ${tokenSums.output} AS outputTokens,
+          ${tokenSums.total} AS totalTokens,
           COALESCE(AVG(latency_ms), 0) AS avgLatencyMs
         FROM requests
       `,
@@ -155,9 +157,9 @@ function getSummary(): StatsSummary {
         SELECT
           provider,
           COUNT(*) AS requests,
-          COALESCE(SUM(input_tokens), 0) AS inputTokens,
-          COALESCE(SUM(output_tokens), 0) AS outputTokens,
-          COALESCE(SUM(total_tokens), 0) AS totalTokens
+          ${tokenSums.input} AS inputTokens,
+          ${tokenSums.output} AS outputTokens,
+          ${tokenSums.total} AS totalTokens
         FROM requests
         GROUP BY provider
         ORDER BY requests DESC, totalTokens DESC
@@ -173,9 +175,9 @@ function getSummary(): StatsSummary {
           target_model AS targetModel,
           provider,
           COUNT(*) AS requests,
-          COALESCE(SUM(input_tokens), 0) AS inputTokens,
-          COALESCE(SUM(output_tokens), 0) AS outputTokens,
-          COALESCE(SUM(total_tokens), 0) AS totalTokens
+          ${tokenSums.input} AS inputTokens,
+          ${tokenSums.output} AS outputTokens,
+          ${tokenSums.total} AS totalTokens
         FROM requests
         GROUP BY provider, model, target_model
         ORDER BY requests DESC, totalTokens DESC
@@ -198,6 +200,19 @@ function getSummary(): StatsSummary {
     byModel,
     recent: getRecentRequests(200),
   }
+}
+
+function summaryTokenSums(excludeFailedTokens: boolean) {
+  return {
+    input: sumTokenColumn('input_tokens', excludeFailedTokens),
+    output: sumTokenColumn('output_tokens', excludeFailedTokens),
+    total: sumTokenColumn('total_tokens', excludeFailedTokens),
+  }
+}
+
+function sumTokenColumn(column: 'input_tokens' | 'output_tokens' | 'total_tokens', excludeFailedTokens: boolean) {
+  const value = excludeFailedTokens ? `CASE WHEN success = 1 THEN ${column} ELSE 0 END` : column
+  return `COALESCE(SUM(${value}), 0)`
 }
 
 function getRecentRequests(limit = 200): RequestRecord[] {

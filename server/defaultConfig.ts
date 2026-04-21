@@ -101,5 +101,8 @@ export const defaultConfig: AppConfig = {
     maxQueueSize: 64,
     queueTimeoutMs: 300000,
   },
+  Stats: {
+    excludeFailedTokens: false,
+  },
   CUSTOM_ROUTER_PATH: '',
 }

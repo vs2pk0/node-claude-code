@@ -283,6 +283,17 @@ function randomBase64Url(byteLength: number) {
     </a-card>
 
     <a-card class="tool-card">
+      <template #title>统计设置</template>
+      <a-form layout="vertical">
+        <div class="form-grid">
+          <a-form-item label="失败请求 Token 不计入统计">
+            <a-switch v-model:checked="draft.Stats.excludeFailedTokens" />
+          </a-form-item>
+        </div>
+      </a-form>
+    </a-card>
+
+    <a-card class="tool-card">
       <template #title>并发控制</template>
       <a-form layout="vertical">
         <div class="form-grid">

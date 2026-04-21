@@ -80,6 +80,12 @@ const concurrencySchema = z
   })
   .passthrough()
 
+const statsSchema = z
+  .object({
+    excludeFailedTokens: z.coerce.boolean().default(false),
+  })
+  .passthrough()
+
 export const configSchema = z
   .object({
     LOG: z.coerce.boolean().default(true),
@@ -100,6 +106,9 @@ export const configSchema = z
       maxConcurrentPerProvider: 1,
       maxQueueSize: 64,
       queueTimeoutMs: 300000,
+    }),
+    Stats: statsSchema.default({
+      excludeFailedTokens: false,
     }),
     CUSTOM_ROUTER_PATH: z.string().default(''),
   })

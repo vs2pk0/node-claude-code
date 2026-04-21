@@ -377,11 +377,39 @@ pre,
   gap: 12px;
 }
 
-.provider-list {
+.provider-table {
+  min-width: 0;
   border: 1px solid #dce3e6;
   border-radius: 6px;
   overflow: hidden;
   background: #ffffff;
+}
+
+.provider-table .ant-table-tbody > tr > td {
+  vertical-align: middle;
+}
+
+.provider-name-cell {
+  font-weight: 600;
+}
+
+.provider-url-cell {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #46555c;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-table-actions {
+  display: inline-flex;
+}
+
+.provider-editor-panel {
+  min-width: 0;
+  padding: 14px 18px 4px;
+  background: #fbfdfd;
 }
 
 .model-row-list {

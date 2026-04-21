@@ -144,6 +144,42 @@ test('streaming upstream request is aborted when the client disconnects mid-stre
   }, 'client disconnect should be recorded as 499')
 })
 
+test('failed request tokens can be excluded from summary aggregates', () => {
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    Stats: {
+      ...current.Stats,
+      excludeFailedTokens: false,
+    },
+  })
+
+  storage.recordRequest(requestRecord({ success: true, inputTokens: 10, outputTokens: 2, status: 200 }))
+  storage.recordRequest(requestRecord({ success: false, inputTokens: 100, outputTokens: 20, status: 500 }))
+
+  const inclusive = storage.getSummary()
+  assert.equal(inclusive.totals.inputTokens, 110)
+  assert.equal(inclusive.totals.outputTokens, 22)
+  assert.equal(inclusive.totals.totalTokens, 132)
+
+  storage.saveConfig({
+    ...storage.getConfig(),
+    Stats: {
+      ...storage.getConfig().Stats,
+      excludeFailedTokens: true,
+    },
+  })
+
+  const filtered = storage.getSummary()
+  assert.equal(filtered.totals.inputTokens, 10)
+  assert.equal(filtered.totals.outputTokens, 2)
+  assert.equal(filtered.totals.totalTokens, 12)
+  assert.equal(filtered.byProvider[0].inputTokens, 10)
+  assert.equal(filtered.byModel[0].inputTokens, 10)
+  assert.ok(filtered.recent.some((record: { success: boolean; inputTokens: number }) => !record.success && record.inputTokens === 100))
+})
+
 function configureProxy(
   providerName: string,
   model: string,
@@ -194,6 +230,21 @@ function configureProxy(
       queueTimeoutMs: concurrency.queueTimeoutMs ?? 5000,
     },
   })
+}
+
+function requestRecord(input: { success: boolean; inputTokens: number; outputTokens: number; status: number }) {
+  return {
+    endpoint: '/v1/messages',
+    provider: 'stats-provider',
+    model: 'stats-model',
+    targetModel: 'stats-target-model',
+    routeKey: 'default',
+    status: input.status,
+    success: input.success,
+    latencyMs: 100,
+    inputTokens: input.inputTokens,
+    outputTokens: input.outputTokens,
+  }
 }
 
 async function handleUpstreamRequest(req: IncomingMessage, res: ServerResponse) {

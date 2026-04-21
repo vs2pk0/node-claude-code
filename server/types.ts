@@ -38,6 +38,11 @@ export interface ConcurrencyConfig {
   [key: string]: unknown
 }
 
+export interface StatsConfig {
+  excludeFailedTokens: boolean
+  [key: string]: unknown
+}
+
 export interface AppConfig {
   LOG: boolean
   LOG_LEVEL: LogLevel
@@ -52,6 +57,7 @@ export interface AppConfig {
   StatusLine: Record<string, unknown>
   Router: RouterConfig
   Concurrency: ConcurrencyConfig
+  Stats: StatsConfig
   CUSTOM_ROUTER_PATH: string
   [key: string]: unknown
 }
