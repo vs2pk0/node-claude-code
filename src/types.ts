@@ -90,6 +90,9 @@ export interface RequestRecord {
   status: number
   success: boolean
   latencyMs: number
+  queueMs: number
+  upstreamMs: number
+  firstByteMs: number
   inputTokens: number
   outputTokens: number
   totalTokens: number

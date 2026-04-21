@@ -18,6 +18,8 @@ const db = new Database(databasePath)
 db.pragma('journal_mode = WAL')
 db.pragma('busy_timeout = 5000')
 
+let cachedConfig: AppConfig | undefined
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -47,6 +49,9 @@ db.exec(`
 `)
 
 ensureRequestColumn('api_key', "TEXT NOT NULL DEFAULT ''")
+ensureRequestColumn('queue_ms', 'INTEGER NOT NULL DEFAULT 0')
+ensureRequestColumn('upstream_ms', 'INTEGER NOT NULL DEFAULT 0')
+ensureRequestColumn('first_byte_ms', 'INTEGER NOT NULL DEFAULT 0')
 
 export const storage = {
   dataDir,
@@ -63,10 +68,15 @@ export const storage = {
 }
 
 function getConfig(): AppConfig {
+  if (cachedConfig) {
+    return cachedConfig
+  }
+
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('config') as { value: string } | undefined
 
   if (row) {
-    return parseConfig(JSON.parse(row.value))
+    cachedConfig = parseConfig(JSON.parse(row.value))
+    return cachedConfig
   }
 
   if (fs.existsSync(settingsPath)) {
@@ -75,8 +85,7 @@ function getConfig(): AppConfig {
     return config
   }
 
-  saveConfig(defaultConfig)
-  return defaultConfig
+  return saveConfig(defaultConfig)
 }
 
 function saveConfig(input: unknown): AppConfig {
@@ -93,6 +102,7 @@ function saveConfig(input: unknown): AppConfig {
   ).run(value, updatedAt)
 
   fs.writeFileSync(settingsPath, `${value}\n`, 'utf8')
+  cachedConfig = config
   return config
 }
 
@@ -101,14 +111,18 @@ function recordRequest(input: RequestRecordInput): RequestRecord {
   const totalTokens = input.inputTokens + input.outputTokens
   const id = randomUUID()
   const apiKey = input.apiKey ?? ''
+  const queueMs = input.queueMs ?? 0
+  const upstreamMs = input.upstreamMs ?? 0
+  const firstByteMs = input.firstByteMs ?? 0
 
   db.prepare(
     `
       INSERT INTO requests (
         id, created_at, endpoint, provider, api_key, model, target_model, route_key,
-        status, success, latency_ms, input_tokens, output_tokens, total_tokens, error
+        status, success, latency_ms, queue_ms, upstream_ms, first_byte_ms,
+        input_tokens, output_tokens, total_tokens, error
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     id,
@@ -122,6 +136,9 @@ function recordRequest(input: RequestRecordInput): RequestRecord {
     input.status,
     input.success ? 1 : 0,
     input.latencyMs,
+    queueMs,
+    upstreamMs,
+    firstByteMs,
     input.inputTokens,
     input.outputTokens,
     totalTokens,
@@ -131,6 +148,9 @@ function recordRequest(input: RequestRecordInput): RequestRecord {
   return {
     ...input,
     apiKey,
+    queueMs,
+    upstreamMs,
+    firstByteMs,
     id,
     createdAt,
     totalTokens,
@@ -259,6 +279,9 @@ function getRecentRequests(limit = 200): RequestRecord[] {
           status,
           success,
           latency_ms AS latencyMs,
+          queue_ms AS queueMs,
+          upstream_ms AS upstreamMs,
+          first_byte_ms AS firstByteMs,
           input_tokens AS inputTokens,
           output_tokens AS outputTokens,
           total_tokens AS totalTokens,

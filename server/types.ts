@@ -96,6 +96,9 @@ export interface RequestRecordInput {
   status: number
   success: boolean
   latencyMs: number
+  queueMs?: number
+  upstreamMs?: number
+  firstByteMs?: number
   inputTokens: number
   outputTokens: number
   error?: string

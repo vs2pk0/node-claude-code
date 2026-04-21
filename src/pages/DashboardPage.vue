@@ -60,15 +60,35 @@ const requestColumns: TableColumnsType<RequestRecord> = [
     customRender: ({ record }) => `${formatNumber(record.inputTokens)} / ${formatNumber(record.outputTokens)}`,
   },
   {
-    title: '耗时',
+    title: '排队',
+    dataIndex: 'queueMs',
+    width: 92,
+    customRender: ({ text }) => `${formatNumber(Number(text))} ms`,
+  },
+  {
+    title: '发起上游',
+    dataIndex: 'upstreamMs',
+    width: 110,
+    customRender: ({ text }) => `${formatNumber(Number(text))} ms`,
+  },
+  {
+    title: '首包',
+    dataIndex: 'firstByteMs',
+    width: 92,
+    customRender: ({ text }) => `${formatNumber(Number(text))} ms`,
+  },
+  {
+    title: '总耗时',
     dataIndex: 'latencyMs',
-    width: 96,
+    width: 104,
+    fixed: 'right',
     customRender: ({ text }) => `${formatNumber(Number(text))} ms`,
   },
   {
     title: '状态',
     dataIndex: 'success',
     width: 94,
+    fixed: 'right',
     customRender: ({ record }) => (record.success ? '成功' : `失败 ${record.status}`),
   },
   {
@@ -370,7 +390,7 @@ async function removeRequest(record: RequestRecord) {
           :columns="requestColumns"
           :data-source="summary?.recent || []"
           :pagination="requestPagination"
-          :scroll="{ x: 1090 }"
+          :scroll="{ x: 1370 }"
           row-key="id"
         >
           <template #bodyCell="{ column, record }">

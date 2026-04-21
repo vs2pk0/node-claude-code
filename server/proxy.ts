@@ -22,6 +22,14 @@ interface PostJsonOptions {
   headers?: Record<string, string>
 }
 
+interface PostJsonResult {
+  upstream: globalThis.Response
+  apiKey: string
+  upstreamStartedAt: number
+  upstreamMs: number
+  cleanup: () => void
+}
+
 interface SelectedApiKey {
   value: string
   label: string
@@ -36,6 +44,8 @@ interface ProviderApiKeyEntry {
 
 const apiKeySequenceByProvider = new Map<string, number>()
 const activeApiKeys = new Map<string, number>()
+let cachedProxyUrl = ''
+let cachedProxyAgent: ProxyAgent | undefined
 
 export function createProxyRouter() {
   const router = Router()
@@ -85,7 +95,7 @@ async function handleAnthropicMessages(req: Request, res: Response) {
   const config = storage.getConfig()
   const body = req.body as JsonRecord
   const requestedModel = String(body.model ?? '')
-  const inputTokens = estimateTokens(body)
+  let inputTokens = 0
   const clientDisconnect = createClientDisconnectSignal(req, res)
   let decision: RouteDecision | undefined
 
@@ -106,6 +116,7 @@ async function handleAnthropicMessages(req: Request, res: Response) {
       return
     }
 
+    inputTokens = estimateTokens(body)
     const payload = anthropicToOpenAi(body, decision.targetModel)
     applyProviderTransformers(payload, decision.provider, decision.targetModel)
 
@@ -123,7 +134,12 @@ async function handleAnthropicMessages(req: Request, res: Response) {
       return
     }
 
-    const { upstream, data, apiKey } = await postJsonWithConcurrency(config, decision, payload, clientDisconnect.signal)
+    const { upstream, data, apiKey, queueMs, upstreamMs, firstByteMs } = await postJsonWithConcurrency(
+      config,
+      decision,
+      payload,
+      clientDisconnect.signal,
+    )
     const responseBody = openAiToAnthropic(data, requestedModel, decision.targetModel)
     const usage = readAnthropicUsage(responseBody)
 
@@ -135,6 +151,9 @@ async function handleAnthropicMessages(req: Request, res: Response) {
       success: upstream.ok,
       inputTokens: usage.inputTokens || inputTokens,
       outputTokens: usage.outputTokens || estimateTokens(responseBody),
+      queueMs,
+      upstreamMs,
+      firstByteMs,
       requestedModel,
       apiKey,
     })
@@ -175,7 +194,12 @@ async function handleOpenAiChat(req: Request, res: Response) {
       return
     }
 
-    const { upstream, data, apiKey } = await postJsonWithConcurrency(config, decision, payload, clientDisconnect.signal)
+    const { upstream, data, apiKey, queueMs, upstreamMs, firstByteMs } = await postJsonWithConcurrency(
+      config,
+      decision,
+      payload,
+      clientDisconnect.signal,
+    )
     const usage = readOpenAiUsage(data)
 
     recordRequest({
@@ -186,6 +210,9 @@ async function handleOpenAiChat(req: Request, res: Response) {
       success: upstream.ok,
       inputTokens: usage.inputTokens || inputTokens,
       outputTokens: usage.outputTokens || estimateTokens(data),
+      queueMs,
+      upstreamMs,
+      firstByteMs,
       requestedModel,
       apiKey,
     })
@@ -226,11 +253,6 @@ async function forwardClaudeCodeMessages(
     headers: readClaudeCodeForwardHeaders(req),
   }
 
-  if (payload.stream) {
-    await forwardClaudeCodeRaw(res, config, decision, payload, startedAt, inputTokens, requestedModel, signal, options)
-    return
-  }
-
   await forwardClaudeCodeRaw(res, config, decision, payload, startedAt, inputTokens, requestedModel, signal, options)
 }
 
@@ -251,18 +273,30 @@ async function streamOpenAi(
   const parseEvents = createSseParser()
   let release = noopRelease
   let upstreamCleanup = noopRelease
+  let queueMs = 0
+  let upstreamMs = 0
+  let firstByteMs = 0
+  let sawFirstByte = false
 
   try {
+    const queueStartedAt = Date.now()
     release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
+    queueMs = Date.now() - queueStartedAt
     await waitForRequestDelay(decision.delayMs, signal)
     const upstreamRequest = await postJson(config, decision, payload, signal)
     const upstream = upstreamRequest.upstream
     upstreamCleanup = upstreamRequest.cleanup
     apiKey = upstreamRequest.apiKey
+    upstreamMs = upstreamRequest.upstreamMs
+    firstByteMs = upstreamRequest.upstreamMs
     status = upstream.status
     prepareSse(res, upstream.status)
 
     for await (const chunk of streamBody(upstream)) {
+      if (!sawFirstByte) {
+        sawFirstByte = true
+        firstByteMs = Date.now() - upstreamRequest.upstreamStartedAt
+      }
       const text = decoder.decode(chunk, { stream: true })
       outputText += collectOpenAiStreamText(parseEvents(text))
       res.write(text)
@@ -290,6 +324,9 @@ async function streamOpenAi(
       success: status >= 200 && status < 300,
       inputTokens,
       outputTokens: estimateTokens(outputText),
+      queueMs,
+      upstreamMs,
+      firstByteMs,
       requestedModel,
       apiKey,
     })
@@ -319,14 +356,22 @@ async function streamAnthropicFromOpenAi(
   const parseEvents = createSseParser()
   let release = noopRelease
   let upstreamCleanup = noopRelease
+  let queueMs = 0
+  let upstreamMs = 0
+  let firstByteMs = 0
+  let sawFirstByte = false
 
   try {
+    const queueStartedAt = Date.now()
     release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
+    queueMs = Date.now() - queueStartedAt
     await waitForRequestDelay(decision.delayMs, signal)
     const upstreamRequest = await postJson(config, decision, payload, signal)
     const upstream = upstreamRequest.upstream
     upstreamCleanup = upstreamRequest.cleanup
     apiKey = upstreamRequest.apiKey
+    upstreamMs = upstreamRequest.upstreamMs
+    firstByteMs = upstreamRequest.upstreamMs
     status = upstream.status
     prepareSse(res, upstream.status)
 
@@ -350,6 +395,10 @@ async function streamAnthropicFromOpenAi(
     )
 
     for await (const chunk of streamBody(upstream)) {
+      if (!sawFirstByte) {
+        sawFirstByte = true
+        firstByteMs = Date.now() - upstreamRequest.upstreamStartedAt
+      }
       const text = decoder.decode(chunk, { stream: true })
       const events = parseEvents(text)
 
@@ -469,6 +518,9 @@ async function streamAnthropicFromOpenAi(
       success: !hadError && status >= 200 && status < 300,
       inputTokens,
       outputTokens,
+      queueMs,
+      upstreamMs,
+      firstByteMs,
       requestedModel,
       apiKey,
     })
@@ -492,6 +544,11 @@ async function forwardClaudeCodeRaw(
   let apiKey = ''
   let release = noopRelease
   let upstreamCleanup = noopRelease
+  let completedAt: number | undefined
+  let queueMs = 0
+  let upstreamMs = 0
+  let firstByteMs = 0
+  let sawFirstByte = false
   const decoder = new TextDecoder()
   const parseEvents = createSseParser()
   let rawText = ''
@@ -501,12 +558,16 @@ async function forwardClaudeCodeRaw(
   }
 
   try {
+    const queueStartedAt = Date.now()
     release = await requestConcurrencyLimiter.acquire(config, decision, { signal, skipProviderLimit: true })
+    queueMs = Date.now() - queueStartedAt
     await waitForRequestDelay(decision.delayMs, signal)
     const upstreamRequest = await postJson(config, decision, payload, signal, options)
     const upstream = upstreamRequest.upstream
     upstreamCleanup = upstreamRequest.cleanup
     apiKey = upstreamRequest.apiKey
+    upstreamMs = upstreamRequest.upstreamMs
+    firstByteMs = upstreamRequest.upstreamMs
     status = upstream.status
     res.status(upstream.status)
     copyUpstreamResponseHeaders(
@@ -517,13 +578,17 @@ async function forwardClaudeCodeRaw(
     res.flushHeaders()
 
     for await (const chunk of streamBody(upstream)) {
+      if (!sawFirstByte) {
+        sawFirstByte = true
+        firstByteMs = Date.now() - upstreamRequest.upstreamStartedAt
+      }
+      res.write(chunk)
       const text = decoder.decode(chunk, { stream: true })
       if (isStream) {
         collectAnthropicStreamUsage(parseEvents(text), usage)
       } else {
         rawText += text
       }
-      res.write(chunk)
     }
 
     const tail = decoder.decode()
@@ -541,6 +606,7 @@ async function forwardClaudeCodeRaw(
       usage.inputTokens = responseUsage.inputTokens
       usage.outputTokens = responseUsage.outputTokens || estimateTokens(Object.keys(data).length ? data : rawText)
     }
+    completedAt = Date.now()
   } catch (error) {
     status = errorStatus(error, signal)
     hadError = true
@@ -568,20 +634,26 @@ async function forwardClaudeCodeRaw(
         }),
       )
     }
+    completedAt = Date.now()
   } finally {
     upstreamCleanup()
     release()
     if (canWriteResponse(res)) {
       res.end()
     }
+    const recordedInputTokens = usage.inputTokens || inputTokens || estimateTokens(payload)
     recordRequest({
       endpoint: '/v1/messages',
       decision,
       startedAt,
+      completedAt,
       status,
       success: !hadError && status >= 200 && status < 300,
-      inputTokens: usage.inputTokens || inputTokens,
+      inputTokens: recordedInputTokens,
       outputTokens: usage.outputTokens,
+      queueMs,
+      upstreamMs,
+      firstByteMs,
       requestedModel,
       apiKey,
     })
@@ -595,16 +667,25 @@ async function postJsonWithConcurrency(
   signal?: AbortSignal,
   options: PostJsonOptions = {},
 ) {
+  const queueStartedAt = Date.now()
   const release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
+  const queueMs = Date.now() - queueStartedAt
   try {
     await waitForRequestDelay(decision.delayMs, signal)
     const upstreamRequest = await postJson(config, decision, payload, signal, options)
     try {
-      const data = (await upstreamRequest.upstream.json()) as JsonRecord
+      const { data, firstByteMs } = await readJsonWithTiming(
+        upstreamRequest.upstream,
+        upstreamRequest.upstreamStartedAt,
+        upstreamRequest.upstreamMs,
+      )
       return {
         upstream: upstreamRequest.upstream,
         data,
         apiKey: upstreamRequest.apiKey,
+        queueMs,
+        upstreamMs: upstreamRequest.upstreamMs,
+        firstByteMs,
       }
     } catch (error) {
       throw withApiKey(error, upstreamRequest.apiKey)
@@ -622,7 +703,7 @@ async function postJson(
   payload: JsonRecord,
   signal?: AbortSignal,
   options: PostJsonOptions = {},
-) {
+): Promise<PostJsonResult> {
   const upstreamAbort = createUpstreamAbort(config, signal)
   const selectedApiKey = selectProviderApiKey(decision)
   const headers: Record<string, string> = {
@@ -646,6 +727,7 @@ async function postJson(
   Object.assign(headers, options.headers)
 
   try {
+    const upstreamStartedAt = Date.now()
     const upstream = await fetch(resolveUpstreamUrl(decision.provider.api_base_url, options.format), {
       method: 'POST',
       headers,
@@ -653,9 +735,12 @@ async function postJson(
       signal: upstreamAbort.signal,
       dispatcher: dispatcher(config),
     } as RequestInit & { dispatcher?: ProxyAgent })
+    const upstreamMs = Date.now() - upstreamStartedAt
     return {
       upstream,
       apiKey: selectedApiKey.label,
+      upstreamStartedAt,
+      upstreamMs,
       cleanup: () => {
         upstreamAbort.cleanup()
         selectedApiKey.release()
@@ -911,11 +996,17 @@ function createUpstreamAbort(config: AppConfig, signal?: AbortSignal) {
 }
 
 function dispatcher(config: AppConfig): ProxyAgent | undefined {
-  if (!config.PROXY_URL) {
+  const proxyUrl = config.PROXY_URL.trim()
+  if (!proxyUrl) {
     return undefined
   }
 
-  return new ProxyAgent(config.PROXY_URL)
+  if (cachedProxyUrl !== proxyUrl || !cachedProxyAgent) {
+    cachedProxyUrl = proxyUrl
+    cachedProxyAgent = new ProxyAgent(proxyUrl)
+  }
+
+  return cachedProxyAgent
 }
 
 function isAuthorized(req: Request, config: AppConfig) {
@@ -1015,14 +1106,50 @@ async function* streamBody(response: globalThis.Response): AsyncGenerator<Uint8A
   }
 }
 
+async function readJsonWithTiming(
+  response: globalThis.Response,
+  upstreamStartedAt: number,
+  fallbackFirstByteMs: number,
+): Promise<{ data: JsonRecord; firstByteMs: number }> {
+  if (!response.body) {
+    return {
+      data: (await response.json()) as JsonRecord,
+      firstByteMs: fallbackFirstByteMs,
+    }
+  }
+
+  const decoder = new TextDecoder()
+  let rawText = ''
+  let firstByteMs = 0
+  let sawFirstByte = false
+
+  for await (const chunk of streamBody(response)) {
+    if (!sawFirstByte) {
+      sawFirstByte = true
+      firstByteMs = Date.now() - upstreamStartedAt
+    }
+    rawText += decoder.decode(chunk, { stream: true })
+  }
+  rawText += decoder.decode()
+
+  return {
+    data: JSON.parse(rawText) as JsonRecord,
+    firstByteMs: sawFirstByte ? firstByteMs : fallbackFirstByteMs,
+  }
+}
+
 function recordRequest(input: {
   endpoint: string
   decision?: RouteDecision
   startedAt: number
+  completedAt?: number
   status: number
   success: boolean
   inputTokens: number
   outputTokens: number
+  queueMs?: number
+  upstreamMs?: number
+  firstByteMs?: number
   requestedModel: string
   apiKey?: string
   error?: string
@@ -1037,7 +1164,10 @@ function recordRequest(input: {
     routeKey: decision?.routeKey ?? 'unknown',
     status: input.status,
     success: input.success,
-    latencyMs: Date.now() - input.startedAt,
+    latencyMs: Math.max(0, (input.completedAt ?? Date.now()) - input.startedAt),
+    queueMs: input.queueMs ?? 0,
+    upstreamMs: input.upstreamMs ?? 0,
+    firstByteMs: input.firstByteMs ?? 0,
     inputTokens: input.inputTokens,
     outputTokens: input.outputTokens,
     error: input.error,
