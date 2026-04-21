@@ -1,5 +1,6 @@
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type RouterStrategy = 'sequence' | 'loadBalance' | 'random'
+export type ModelFormatMode = 'default' | 'claude-code'
 
 export interface ProviderConfig {
   name: string
@@ -7,6 +8,8 @@ export interface ProviderConfig {
   api_key: string
   models: string[]
   model_aliases?: Record<string, string>
+  model_formats?: Record<string, ModelFormatMode>
+  claude_code_forward?: boolean
   transformer?: Record<string, unknown>
   [key: string]: unknown
 }
@@ -44,6 +47,11 @@ export interface StatsConfig {
   [key: string]: unknown
 }
 
+export interface UIConfig {
+  showModelConflictWarnings: boolean
+  [key: string]: unknown
+}
+
 export interface AppConfig {
   LOG: boolean
   LOG_LEVEL: LogLevel
@@ -59,6 +67,7 @@ export interface AppConfig {
   Router: RouterConfig
   Concurrency: ConcurrencyConfig
   Stats: StatsConfig
+  UI: UIConfig
   CUSTOM_ROUTER_PATH: string
   [key: string]: unknown
 }

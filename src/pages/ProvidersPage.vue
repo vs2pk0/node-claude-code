@@ -4,7 +4,7 @@ import type { TableColumnsType } from 'ant-design-vue'
 import { CopyOutlined, DeleteOutlined, ImportOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { useAppState } from '@/composables/useAppState'
-import type { ProviderConfig } from '@/types'
+import type { ModelFormatMode, ProviderConfig } from '@/types'
 import { readError } from '@/utils/format'
 
 const {
@@ -17,6 +17,9 @@ const {
   removeProviderModel,
   removeProvider,
   providerStatus,
+  modelConflictWarningsEnabled,
+  modelAliasConflictsForProvider,
+  findModelAliasConflict,
 } = useAppState()
 
 const curlImportOpen = ref(false)
@@ -30,6 +33,10 @@ interface ProviderRow {
 
 const providerKeys = new WeakMap<ProviderConfig, string>()
 let providerKeySeed = 0
+const modelFormatOptions: Array<{ label: string; value: ModelFormatMode }> = [
+  { label: '默认格式', value: 'default' },
+  { label: 'Claude Code 直转', value: 'claude-code' },
+]
 
 const providerRows = computed<ProviderRow[]>(() => {
   return draft.value?.Providers.map((provider, index) => ({ provider, index, key: providerStableKey(provider) })) ?? []
@@ -99,6 +106,37 @@ function providerModelCount(record: ProviderRow) {
   return providerEditors.value[record.index]?.models.filter((row) => row.model.trim()).length ?? record.provider.models.length
 }
 
+function providerAliasConflictDescription(providerIndex: number) {
+  if (!modelConflictWarningsEnabled.value) {
+    return ''
+  }
+
+  return modelAliasConflictsForProvider(providerIndex)
+    .map((conflict) => {
+      const sources = conflict.entries
+        .map((entry) => `${entry.providerName}/${entry.alias || entry.model}`)
+        .join('、')
+      return `${conflict.publicId}：${sources}`
+    })
+    .join('；')
+}
+
+function providerHasAliasConflict(providerIndex: number) {
+  if (!modelConflictWarningsEnabled.value) {
+    return false
+  }
+
+  return modelAliasConflictsForProvider(providerIndex).length > 0
+}
+
+function modelAliasInputStatus(providerIndex: number, modelIndex: number) {
+  if (!modelConflictWarningsEnabled.value) {
+    return undefined
+  }
+
+  return findModelAliasConflict(providerIndex, modelIndex) ? 'warning' : undefined
+}
+
 function providerStableKey(provider: ProviderConfig) {
   const existingKey = providerKeys.get(provider)
   if (existingKey) {
@@ -162,9 +200,13 @@ function providerStableKey(provider: ProviderConfig) {
           {{ providerModelCount(record) }}
         </template>
         <template v-else-if="column.key === 'status'">
-          <a-tag :color="providerStatus(record.provider) === '就绪' ? 'success' : 'warning'">
-            {{ providerStatus(record.provider) }}
-          </a-tag>
+          <a-space size="small">
+            <a-tag :color="providerStatus(record.provider) === '就绪' ? 'success' : 'warning'">
+              {{ providerStatus(record.provider) }}
+            </a-tag>
+            <a-tag v-if="record.provider.claude_code_forward" color="blue">直转</a-tag>
+            <a-tag v-if="providerHasAliasConflict(record.index)" color="orange">模型冲突</a-tag>
+          </a-space>
         </template>
         <template v-else-if="column.key === 'action'">
           <a-space class="provider-table-actions">
@@ -193,15 +235,34 @@ function providerStableKey(provider: ProviderConfig) {
               <a-form-item label="API Key">
                 <a-input-password v-model:value="record.provider.api_key" autocomplete="new-password" />
               </a-form-item>
-              <a-form-item v-if="providerEditors[record.index]" label="Models">
+              <a-form-item label="转发 Claude Code">
+                <a-switch v-model:checked="record.provider.claude_code_forward" />
+              </a-form-item>
+              <a-form-item v-if="providerEditors[record.index]" label="Models" class="models-form-item">
                 <div class="model-row-list">
+                  <a-alert
+                    v-if="providerAliasConflictDescription(record.index)"
+                    type="warning"
+                    show-icon
+                    message="模型显示 ID 存在重复"
+                    :description="providerAliasConflictDescription(record.index)"
+                  />
                   <div
                     v-for="(modelRow, modelIndex) in providerEditors[record.index].models"
                     :key="`${record.index}-${modelIndex}`"
                     class="model-row"
                   >
                     <a-input v-model:value="modelRow.model" placeholder="真实模型" />
-                    <a-input v-model:value="modelRow.alias" placeholder="模型别名（可不填）" />
+                    <a-input
+                      v-model:value="modelRow.alias"
+                      placeholder="模型别名（可不填）"
+                      :status="modelAliasInputStatus(record.index, modelIndex)"
+                    />
+                    <a-select
+                      v-model:value="modelRow.format"
+                      :options="modelFormatOptions"
+                      placeholder="格式处理"
+                    />
                     <a-button
                       class="row-delete-button"
                       size="small"

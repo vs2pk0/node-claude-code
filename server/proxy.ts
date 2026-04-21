@@ -15,6 +15,12 @@ import { applyProviderTransformers } from './transformers.js'
 import type { AppConfig, RequestRecordInput, RouteDecision } from './types.js'
 
 type JsonRecord = Record<string, unknown>
+type UpstreamPayloadFormat = 'openai' | 'claude-code'
+
+interface PostJsonOptions {
+  format?: UpstreamPayloadFormat
+  headers?: Record<string, string>
+}
 
 export function createProxyRouter() {
   const router = Router()
@@ -70,6 +76,21 @@ async function handleAnthropicMessages(req: Request, res: Response) {
 
   try {
     decision = resolveRoute(config, body)
+    if (shouldForwardClaudeCode(decision)) {
+      await forwardClaudeCodeMessages(
+        req,
+        res,
+        config,
+        decision,
+        body,
+        startedAt,
+        inputTokens,
+        requestedModel,
+        clientDisconnect.signal,
+      )
+      return
+    }
+
     const payload = anthropicToOpenAi(body, decision.targetModel)
     applyProviderTransformers(payload, decision.provider, decision.targetModel)
 
@@ -164,6 +185,36 @@ async function handleOpenAiChat(req: Request, res: Response) {
   } finally {
     clientDisconnect.cleanup()
   }
+}
+
+async function forwardClaudeCodeMessages(
+  req: Request,
+  res: Response,
+  config: AppConfig,
+  decision: RouteDecision,
+  body: JsonRecord,
+  startedAt: number,
+  inputTokens: number,
+  requestedModel: string,
+  signal?: AbortSignal,
+) {
+  const payload: JsonRecord = {
+    ...body,
+    model: decision.targetModel,
+  }
+  applyProviderTransformers(payload, decision.provider, decision.targetModel)
+
+  const options: PostJsonOptions = {
+    format: 'claude-code',
+    headers: readClaudeCodeForwardHeaders(req),
+  }
+
+  if (payload.stream) {
+    await forwardClaudeCodeRaw(res, config, decision, payload, startedAt, inputTokens, requestedModel, signal, options)
+    return
+  }
+
+  await forwardClaudeCodeRaw(res, config, decision, payload, startedAt, inputTokens, requestedModel, signal, options)
 }
 
 async function streamOpenAi(
@@ -399,16 +450,126 @@ async function streamAnthropicFromOpenAi(
   }
 }
 
+async function forwardClaudeCodeRaw(
+  res: Response,
+  config: AppConfig,
+  decision: RouteDecision,
+  payload: JsonRecord,
+  startedAt: number,
+  inputTokens: number,
+  requestedModel: string,
+  signal?: AbortSignal,
+  options: PostJsonOptions = {},
+) {
+  const isStream = payload.stream === true
+  let status = 502
+  let hadError = false
+  let release = noopRelease
+  let upstreamCleanup = noopRelease
+  const decoder = new TextDecoder()
+  const parseEvents = createSseParser()
+  let rawText = ''
+  const usage = {
+    inputTokens: 0,
+    outputTokens: 0,
+  }
+
+  try {
+    release = await requestConcurrencyLimiter.acquire(config, decision, { signal, skipProviderLimit: true })
+    await waitForRequestDelay(decision.delayMs, signal)
+    const upstreamRequest = await postJson(config, decision, payload, signal, options)
+    const upstream = upstreamRequest.upstream
+    upstreamCleanup = upstreamRequest.cleanup
+    status = upstream.status
+    res.status(upstream.status)
+    copyUpstreamResponseHeaders(
+      res,
+      upstream,
+      isStream ? 'text/event-stream; charset=utf-8' : 'application/json; charset=utf-8',
+    )
+    res.flushHeaders()
+
+    for await (const chunk of streamBody(upstream)) {
+      const text = decoder.decode(chunk, { stream: true })
+      if (isStream) {
+        collectAnthropicStreamUsage(parseEvents(text), usage)
+      } else {
+        rawText += text
+      }
+      res.write(chunk)
+    }
+
+    const tail = decoder.decode()
+    if (tail) {
+      if (isStream) {
+        collectAnthropicStreamUsage(parseEvents(tail), usage)
+      } else {
+        rawText += tail
+      }
+    }
+
+    if (!isStream) {
+      const data = safeJson(rawText)
+      const responseUsage = readAnthropicUsage(data)
+      usage.inputTokens = responseUsage.inputTokens
+      usage.outputTokens = responseUsage.outputTokens || estimateTokens(Object.keys(data).length ? data : rawText)
+    }
+  } catch (error) {
+    status = errorStatus(error, signal)
+    hadError = true
+    if (!isClientClosed(error, signal) && canWriteResponse(res) && !res.headersSent) {
+      if (isStream) {
+        prepareSse(res, status)
+      } else {
+        res.status(status).json({
+          error: {
+            type: status === 400 ? 'invalid_request_error' : 'api_error',
+            message: readableError(error),
+          },
+        })
+      }
+    }
+    if (isStream && !isClientClosed(error, signal) && canWriteResponse(res)) {
+      res.write(
+        anthropicSseEvent('error', {
+          type: 'error',
+          error: {
+            type: 'api_error',
+            message: readableError(error),
+          },
+        }),
+      )
+    }
+  } finally {
+    upstreamCleanup()
+    release()
+    if (canWriteResponse(res)) {
+      res.end()
+    }
+    recordRequest({
+      endpoint: '/v1/messages',
+      decision,
+      startedAt,
+      status,
+      success: !hadError && status >= 200 && status < 300,
+      inputTokens: usage.inputTokens || inputTokens,
+      outputTokens: usage.outputTokens,
+      requestedModel,
+    })
+  }
+}
+
 async function postJsonWithConcurrency(
   config: AppConfig,
   decision: RouteDecision,
   payload: JsonRecord,
   signal?: AbortSignal,
+  options: PostJsonOptions = {},
 ) {
   const release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
   try {
     await waitForRequestDelay(decision.delayMs, signal)
-    const upstreamRequest = await postJson(config, decision, payload, signal)
+    const upstreamRequest = await postJson(config, decision, payload, signal, options)
     try {
       const data = (await upstreamRequest.upstream.json()) as JsonRecord
       return {
@@ -423,18 +584,36 @@ async function postJsonWithConcurrency(
   }
 }
 
-async function postJson(config: AppConfig, decision: RouteDecision, payload: JsonRecord, signal?: AbortSignal) {
+async function postJson(
+  config: AppConfig,
+  decision: RouteDecision,
+  payload: JsonRecord,
+  signal?: AbortSignal,
+  options: PostJsonOptions = {},
+) {
   const upstreamAbort = createUpstreamAbort(config, signal)
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }
 
   if (decision.provider.api_key) {
-    headers.authorization = `Bearer ${decision.provider.api_key}`
+    if (options.format === 'claude-code') {
+      headers['x-api-key'] = decision.provider.api_key
+      headers.authorization = `Bearer ${decision.provider.api_key}`
+    } else {
+      headers.authorization = `Bearer ${decision.provider.api_key}`
+    }
   }
 
+  if (options.format === 'claude-code') {
+    headers['anthropic-version'] = options.headers?.['anthropic-version'] || '2023-06-01'
+    headers.accept = payload.stream ? 'text/event-stream' : 'application/json'
+    headers['accept-encoding'] = 'identity'
+  }
+  Object.assign(headers, options.headers)
+
   try {
-    const upstream = await fetch(decision.provider.api_base_url, {
+    const upstream = await fetch(resolveUpstreamUrl(decision.provider.api_base_url, options.format), {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
@@ -452,6 +631,35 @@ async function postJson(config: AppConfig, decision: RouteDecision, payload: Jso
       throw reason
     }
     throw error
+  }
+}
+
+function resolveUpstreamUrl(apiBaseUrl: string, format: UpstreamPayloadFormat = 'openai') {
+  if (format !== 'claude-code') {
+    return apiBaseUrl
+  }
+
+  try {
+    const url = new URL(apiBaseUrl)
+    const pathname = url.pathname.replace(/\/+$/, '')
+    if (pathname === '' || pathname === '/') {
+      url.pathname = '/v1/messages'
+      return url.toString()
+    }
+
+    if (pathname === '/v1') {
+      url.pathname = '/v1/messages'
+      return url.toString()
+    }
+
+    if (pathname.endsWith('/v1/messages')) {
+      url.pathname = pathname
+      return url.toString()
+    }
+
+    return url.toString()
+  } catch {
+    return apiBaseUrl
   }
 }
 
@@ -535,6 +743,28 @@ function isAuthorized(req: Request, config: AppConfig) {
   return bearer === config.APIKEY || apiKey === config.APIKEY
 }
 
+function shouldForwardClaudeCode(decision: RouteDecision) {
+  return Boolean(
+    decision.provider.claude_code_forward ||
+      decision.provider.model_formats?.[decision.targetModel] === 'claude-code',
+  )
+}
+
+function readClaudeCodeForwardHeaders(req: Request) {
+  const headers: Record<string, string> = {}
+  const anthropicVersion = req.header('anthropic-version')
+  const anthropicBeta = req.header('anthropic-beta')
+
+  if (anthropicVersion) {
+    headers['anthropic-version'] = anthropicVersion
+  }
+  if (anthropicBeta) {
+    headers['anthropic-beta'] = anthropicBeta
+  }
+
+  return headers
+}
+
 function createClientDisconnectSignal(req: Request, res: Response) {
   const controller = new AbortController()
   const abort = () => {
@@ -566,6 +796,22 @@ function prepareSse(res: Response, status: number) {
   res.setHeader('cache-control', 'no-cache, no-transform')
   res.setHeader('connection', 'keep-alive')
   res.flushHeaders()
+}
+
+function copyUpstreamResponseHeaders(res: Response, upstream: globalThis.Response, fallbackContentType: string) {
+  const contentType = upstream.headers.get('content-type') || fallbackContentType
+  res.setHeader('content-type', contentType)
+
+  for (const [name, value] of upstream.headers) {
+    const normalized = name.toLowerCase()
+    if (
+      normalized.startsWith('anthropic-') ||
+      normalized.startsWith('x-ratelimit-') ||
+      normalized === 'retry-after'
+    ) {
+      res.setHeader(name, value)
+    }
+  }
 }
 
 function canWriteResponse(res: Response) {
@@ -674,6 +920,25 @@ function collectOpenAiStreamText(events: string[]): string {
       return extractOpenAiContent(asRecord(choice?.delta))
     })
     .join('')
+}
+
+function collectAnthropicStreamUsage(
+  events: string[],
+  usage: { inputTokens: number; outputTokens: number },
+) {
+  for (const event of events) {
+    if (event === '[DONE]' || !event.includes('"usage"')) {
+      continue
+    }
+
+    const data = safeJson(event)
+    const message = asRecord(data.message)
+    const messageUsage = asRecord(message.usage)
+    const deltaUsage = asRecord(data.usage)
+
+    usage.inputTokens ||= readNumber(messageUsage.input_tokens)
+    usage.outputTokens = readNumber(deltaUsage.output_tokens) || usage.outputTokens
+  }
 }
 
 function writeToolDeltas(

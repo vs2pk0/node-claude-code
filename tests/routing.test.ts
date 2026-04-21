@@ -158,6 +158,42 @@ test('models endpoint exposes provider aliases and resolves them to real models'
   assert.equal(decision.targetModel, 'real-provider-model')
 })
 
+test('provider format settings are normalized with default fallback', () => {
+  const config = parseConfig({
+    ...defaultConfig,
+    Providers: [
+      {
+        ...provider('p1', ['m1', 'm2']),
+        model_formats: {
+          m1: 'claude-code',
+          m2: 'unknown-format',
+        },
+        claude_code_forward: true,
+      },
+    ],
+  })
+
+  assert.equal(config.Providers[0].claude_code_forward, true)
+  assert.equal(config.Providers[0].model_formats?.m1, 'claude-code')
+  assert.equal(config.Providers[0].model_formats?.m2, 'default')
+})
+
+test('ui settings default to showing model conflict warnings', () => {
+  const legacyInput = JSON.parse(JSON.stringify(defaultConfig)) as Record<string, unknown>
+  delete legacyInput.UI
+
+  const legacyConfig = parseConfig(legacyInput)
+  const disabledConfig = parseConfig({
+    ...defaultConfig,
+    UI: {
+      showModelConflictWarnings: false,
+    },
+  })
+
+  assert.equal(legacyConfig.UI.showModelConflictWarnings, true)
+  assert.equal(disabledConfig.UI.showModelConflictWarnings, false)
+})
+
 function provider(name: string, models: string[], modelAliases?: Record<string, string>) {
   return {
     name,

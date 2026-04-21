@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { AppConfig } from './types.js'
 
 const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']).catch('info')
+const modelFormatModeSchema = z.enum(['default', 'claude-code']).catch('default')
 
 const providerSchema = z
   .object({
@@ -10,6 +11,8 @@ const providerSchema = z
     api_key: z.string().default(''),
     models: z.array(z.string().trim().min(1)).default([]),
     model_aliases: z.record(z.string(), z.string()).optional(),
+    model_formats: z.record(z.string(), modelFormatModeSchema).optional(),
+    claude_code_forward: z.coerce.boolean().default(false),
     transformer: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough()
@@ -88,6 +91,12 @@ const statsSchema = z
   })
   .passthrough()
 
+const uiSchema = z
+  .object({
+    showModelConflictWarnings: z.coerce.boolean().default(true),
+  })
+  .passthrough()
+
 export const configSchema = z
   .object({
     LOG: z.coerce.boolean().default(true),
@@ -111,6 +120,9 @@ export const configSchema = z
     }),
     Stats: statsSchema.default({
       excludeFailedTokens: false,
+    }),
+    UI: uiSchema.default({
+      showModelConflictWarnings: true,
     }),
     CUSTOM_ROUTER_PATH: z.string().default(''),
   })

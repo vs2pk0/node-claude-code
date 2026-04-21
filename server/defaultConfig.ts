@@ -109,5 +109,8 @@ export const defaultConfig: AppConfig = {
   Stats: {
     excludeFailedTokens: false,
   },
+  UI: {
+    showModelConflictWarnings: true,
+  },
   CUSTOM_ROUTER_PATH: '',
 }

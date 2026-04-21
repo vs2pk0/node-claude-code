@@ -5,7 +5,7 @@ import { message } from 'ant-design-vue'
 import { useAppState } from '@/composables/useAppState'
 import type { RouterRuleConfig } from '@/types'
 
-const { draft, routeOptions, originUrl } = useAppState()
+const { draft, routeOptions, modelAliasConflicts, modelConflictWarningsEnabled, originUrl } = useAppState()
 
 const claudeConfigOpen = ref(false)
 const strategyOptions = [
@@ -63,6 +63,44 @@ const claudeCodeJson = computed(() => JSON.stringify(claudeCodeConfig.value, nul
 
 function hasMultipleTargets(rule: RouterRuleConfig) {
   return rule.targets.length > 1
+}
+
+function routeHasAliasConflict(rule: RouterRuleConfig) {
+  if (!modelConflictWarningsEnabled.value) {
+    return false
+  }
+
+  return routeAliasConflicts(rule).length > 0
+}
+
+function routeAliasConflictDescription(rule: RouterRuleConfig) {
+  if (!modelConflictWarningsEnabled.value) {
+    return ''
+  }
+
+  return routeAliasConflicts(rule)
+    .map((conflict) => {
+      const sources = conflict.entries
+        .map((entry) => `${entry.providerName}/${entry.alias || entry.model}`)
+        .join('、')
+      return `${conflict.publicId}：${sources}`
+    })
+    .join('；')
+}
+
+function routeAliasConflicts(rule: RouterRuleConfig) {
+  if (!modelConflictWarningsEnabled.value) {
+    return []
+  }
+
+  const selectedTargets = new Set(rule.targets.map((target) => target.trim()).filter(Boolean))
+  if (!selectedTargets.size) {
+    return []
+  }
+
+  return modelAliasConflicts.value.filter((conflict) =>
+    conflict.entries.some((entry) => selectedTargets.has(`${entry.providerName},${entry.model}`)),
+  )
 }
 
 async function copyClaudeCodeJson() {
@@ -191,6 +229,7 @@ function randomBase64Url(byteLength: number) {
                   mode="multiple"
                   show-search
                   allow-clear
+                  :status="routeHasAliasConflict(item.rule) ? 'warning' : undefined"
                   :options="routeOptions"
                 />
                 <a-select
@@ -210,6 +249,10 @@ function randomBase64Url(byteLength: number) {
                   <span>ms</span>
                 </div>
               </div>
+              <div v-if="routeAliasConflictDescription(item.rule)" class="route-conflict-note">
+                <a-tag color="orange">模型冲突</a-tag>
+                <span>{{ routeAliasConflictDescription(item.rule) }}</span>
+              </div>
             </a-form-item>
           </div>
           <div class="route-threshold-row">
@@ -223,6 +266,17 @@ function randomBase64Url(byteLength: number) {
               />
             </a-form-item>
           </div>
+        </div>
+      </a-form>
+    </a-card>
+
+    <a-card class="tool-card">
+      <template #title>显示设置</template>
+      <a-form layout="vertical">
+        <div class="form-grid">
+          <a-form-item label="显示模型冲突提示">
+            <a-switch v-model:checked="draft.UI.showModelConflictWarnings" />
+          </a-form-item>
         </div>
       </a-form>
     </a-card>

@@ -2,7 +2,7 @@ import { computed, reactive, ref } from 'vue'
 import type { UploadProps } from 'ant-design-vue'
 import { message } from 'ant-design-vue'
 import { exportConfig, getConfig, getHealth, getStatsSummary, importConfig, saveConfig, type HealthPayload } from '@/api'
-import type { AppConfig, ProviderConfig, StatsSummary } from '@/types'
+import type { AppConfig, ModelFormatMode, ProviderConfig, StatsSummary } from '@/types'
 import { readError } from '@/utils/format'
 
 export interface ProviderEditorState {
@@ -11,6 +11,20 @@ export interface ProviderEditorState {
 }
 
 export interface ProviderModelEditorState {
+  model: string
+  alias: string
+  format: ModelFormatMode
+}
+
+export interface ModelAliasConflict {
+  publicId: string
+  entries: ModelAliasConflictEntry[]
+}
+
+export interface ModelAliasConflictEntry {
+  providerIndex: number
+  providerName: string
+  modelIndex: number
   model: string
   alias: string
 }
@@ -25,6 +39,8 @@ const loading = reactive({
   saving: false,
   importing: false,
 })
+
+const defaultModelFormat: ModelFormatMode = 'default'
 
 let initialized = false
 let statsTimer: number | undefined
@@ -41,6 +57,9 @@ const routeOptions = computed(() => {
     ) ?? []
   )
 })
+
+const modelAliasConflicts = computed(() => readModelAliasConflicts())
+const modelConflictWarningsEnabled = computed(() => draft.value?.UI?.showModelConflictWarnings !== false)
 
 const originUrl = computed(() => {
   const config = draft.value
@@ -191,6 +210,8 @@ function addProvider() {
     api_key: '',
     models: ['model-name'],
     model_aliases: {},
+    model_formats: {},
+    claude_code_forward: false,
     transformer: {
       use: [
         [
@@ -217,6 +238,8 @@ function importProviderFromCurl(curlText: string) {
     api_key: parsed.apiKey,
     models: [parsed.model],
     model_aliases: {},
+    model_formats: parsed.claudeCodeForward ? { [parsed.model]: 'claude-code' } : {},
+    claude_code_forward: parsed.claudeCodeForward,
     transformer: {
       use: [
         [
@@ -251,6 +274,7 @@ function copyProvider(index: number) {
     name: `${provider.name || `provider-${index + 1}`}-${formatTimestamp(new Date())}`,
     models: modelEntries.models,
     model_aliases: modelEntries.aliases,
+    model_formats: modelEntries.formats,
     transformer: parseTransformer(editor.transformerText),
   }
 
@@ -287,6 +311,26 @@ function providerStatus(provider: ProviderConfig) {
     return '未配置'
   }
   return provider.api_key ? '就绪' : '缺少 Key'
+}
+
+function modelAliasConflictsForProvider(providerIndex: number) {
+  if (!modelConflictWarningsEnabled.value) {
+    return []
+  }
+
+  return modelAliasConflicts.value.filter((conflict) =>
+    conflict.entries.some((entry) => entry.providerIndex === providerIndex),
+  )
+}
+
+function findModelAliasConflict(providerIndex: number, modelIndex: number) {
+  if (!modelConflictWarningsEnabled.value) {
+    return undefined
+  }
+
+  return modelAliasConflicts.value.find((conflict) =>
+    conflict.entries.some((entry) => entry.providerIndex === providerIndex && entry.modelIndex === modelIndex),
+  )
 }
 
 function resolveModelAlias(providerName: string, model: string) {
@@ -354,6 +398,7 @@ function materializeDraft(): AppConfig | undefined {
         ...provider,
         models: modelEntries.models,
         model_aliases: modelEntries.aliases,
+        model_formats: modelEntries.formats,
         transformer: parseTransformer(editor?.transformerText ?? ''),
       }
     })
@@ -409,11 +454,13 @@ function safePreviewTransformer(text: string): Record<string, unknown> | undefin
 function materializeModelRows(rows: ProviderModelEditorState[]) {
   const models: string[] = []
   const aliases: Record<string, string> = {}
+  const formats: Record<string, ModelFormatMode> = {}
   const usedModels = new Set<string>()
 
   for (const row of rows) {
     const model = row.model.trim()
     const alias = row.alias.trim()
+    const format = normalizeModelFormat(row.format)
     if (!model && !alias) {
       continue
     }
@@ -431,11 +478,15 @@ function materializeModelRows(rows: ProviderModelEditorState[]) {
     if (alias) {
       aliases[model] = alias
     }
+    if (format !== defaultModelFormat) {
+      formats[model] = format
+    }
   }
 
   return {
     models,
     aliases: Object.keys(aliases).length ? aliases : undefined,
+    formats: Object.keys(formats).length ? formats : undefined,
   }
 }
 
@@ -445,17 +496,21 @@ function safePreviewModelPayload(rows: ProviderModelEditorState[]) {
     return {
       models: entries.models,
       model_aliases: entries.aliases,
+      model_formats: entries.formats,
     }
   } catch {
     return {
       models: rows.map((row) => row.model.trim()).filter(Boolean),
       model_aliases: {},
+      model_formats: {},
     }
   }
 }
 
 function createModelEditorRows(provider: ProviderConfig) {
-  const rows = provider.models.map((model) => createModelEditorRow(model, readModelAlias(provider, model)))
+  const rows = provider.models.map((model) =>
+    createModelEditorRow(model, readModelAlias(provider, model), readModelFormat(provider, model)),
+  )
   return rows.length ? rows : [createModelEditorRow()]
 }
 
@@ -476,6 +531,43 @@ function readEditableModelRows(provider: ProviderConfig, providerIndex: number) 
     .filter((row) => row.model)
 }
 
+function readModelAliasConflicts() {
+  const providers = draft.value?.Providers ?? []
+  const entriesByPublicId = new Map<string, ModelAliasConflictEntry[]>()
+
+  providers.forEach((provider, providerIndex) => {
+    const providerName = provider.name || `Provider ${providerIndex + 1}`
+    const editor = providerEditors.value[providerIndex]
+    const rows = editor?.models ?? createModelEditorRows(provider)
+
+    rows.forEach((row, modelIndex) => {
+      const model = row.model.trim()
+      const alias = row.alias.trim()
+      const publicId = alias || model
+      if (!model || !publicId) {
+        return
+      }
+
+      const entries = entriesByPublicId.get(publicId) ?? []
+      entries.push({
+        providerIndex,
+        providerName,
+        modelIndex,
+        model,
+        alias,
+      })
+      entriesByPublicId.set(publicId, entries)
+    })
+  })
+
+  return [...entriesByPublicId.entries()]
+    .filter(([, entries]) => entries.length > 1)
+    .map(([publicId, entries]) => ({
+      publicId,
+      entries,
+    }))
+}
+
 function readEditableModelAlias(provider: ProviderConfig, providerIndex: number, model: string) {
   const editorAlias = readEditableModelRows(provider, providerIndex).find((row) => row.model === model)?.alias
   if (editorAlias) {
@@ -485,10 +577,15 @@ function readEditableModelAlias(provider: ProviderConfig, providerIndex: number,
   return readModelAlias(provider, model)
 }
 
-function createModelEditorRow(model = '', alias = ''): ProviderModelEditorState {
+function createModelEditorRow(
+  model = '',
+  alias = '',
+  format: ModelFormatMode = defaultModelFormat,
+): ProviderModelEditorState {
   return {
     model,
     alias,
+    format,
   }
 }
 
@@ -512,6 +609,14 @@ function readModelAlias(provider: ProviderConfig, model: string) {
   const aliases = provider.model_aliases
   const alias = aliases?.[model]
   return typeof alias === 'string' && alias.trim() ? alias.trim() : ''
+}
+
+function readModelFormat(provider: ProviderConfig, model: string): ModelFormatMode {
+  return normalizeModelFormat(provider.model_formats?.[model])
+}
+
+function normalizeModelFormat(format: unknown): ModelFormatMode {
+  return format === 'claude-code' ? 'claude-code' : defaultModelFormat
 }
 
 function parseCurlProvider(curlText: string) {
@@ -540,13 +645,13 @@ function parseCurlProvider(curlText: string) {
     }
 
     if (token === '--header' || token === '-H') {
-      apiKey = extractBearerKey(next) || apiKey
+      apiKey = extractApiKey(next) || apiKey
       index += 1
       continue
     }
 
     if (token.startsWith('--header=')) {
-      apiKey = extractBearerKey(token.slice('--header='.length)) || apiKey
+      apiKey = extractApiKey(token.slice('--header='.length)) || apiKey
       continue
     }
 
@@ -574,7 +679,7 @@ function parseCurlProvider(curlText: string) {
   }
 
   if (!apiKey) {
-    throw new Error('未解析到 Authorization Bearer')
+    throw new Error('未解析到 API Key')
   }
 
   const payload = parseCurlJsonPayload(data)
@@ -588,6 +693,7 @@ function parseCurlProvider(curlText: string) {
     apiBaseUrl,
     apiKey,
     model,
+    claudeCodeForward: isClaudeCodeMessagesUrl(apiBaseUrl),
   }
 }
 
@@ -655,9 +761,14 @@ function tokenizeCurl(input: string) {
   return tokens
 }
 
-function extractBearerKey(header: string) {
+function extractApiKey(header: string) {
   const match = header.match(/^authorization\s*:\s*bearer\s+(.+)$/i)
-  return match?.[1]?.trim() ?? ''
+  if (match?.[1]?.trim()) {
+    return match[1].trim()
+  }
+
+  const apiKeyMatch = header.match(/^(?:x-api-key|anthropic-api-key)\s*:\s*(.+)$/i)
+  return apiKeyMatch?.[1]?.trim() ?? ''
 }
 
 function parseCurlJsonPayload(data: string) {
@@ -697,6 +808,15 @@ function providerNameFromUrl(value: string) {
   }
 }
 
+function isClaudeCodeMessagesUrl(value: string) {
+  try {
+    const pathname = new URL(value).pathname.replace(/\/+$/, '')
+    return pathname.endsWith('/v1/messages')
+  } catch {
+    return false
+  }
+}
+
 function sanitizeProviderName(name: string) {
   return name
     .replace(/[^a-z0-9-]+/gi, '-')
@@ -726,6 +846,8 @@ export function useAppState() {
     providerEditors,
     loading,
     routeOptions,
+    modelAliasConflicts,
+    modelConflictWarningsEnabled,
     originUrl,
     uiUrl,
     jsonPreview,
@@ -746,6 +868,8 @@ export function useAppState() {
     removeProviderModel,
     removeProvider,
     providerStatus,
+    modelAliasConflictsForProvider,
+    findModelAliasConflict,
     resolveModelAlias,
     resolveProviderName,
   }

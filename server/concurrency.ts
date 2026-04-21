@@ -12,6 +12,7 @@ interface QueueItem {
   providerKey: string
   targetKey: string
   limits: QueueLimits
+  skipProviderLimit: boolean
   resolve: (release: () => void) => void
   timeout: NodeJS.Timeout
   signal?: AbortSignal
@@ -20,6 +21,7 @@ interface QueueItem {
 
 interface AcquireOptions {
   signal?: AbortSignal
+  skipProviderLimit?: boolean
 }
 
 export class ConcurrencyLimiter {
@@ -40,7 +42,8 @@ export class ConcurrencyLimiter {
 
     const providerKey = decision.providerName || decision.provider.name
     const targetKey = routeTargetKey(providerKey, decision.targetModel)
-    if (this.canStart(providerKey, limits)) {
+    const skipProviderLimit = options.skipProviderLimit === true
+    if (this.canStart(providerKey, limits, skipProviderLimit)) {
       return Promise.resolve(this.start(providerKey, targetKey))
     }
 
@@ -73,6 +76,7 @@ export class ConcurrencyLimiter {
         providerKey,
         targetKey,
         limits,
+        skipProviderLimit,
         resolve: (release) => {
           if (settled) {
             release()
@@ -94,9 +98,9 @@ export class ConcurrencyLimiter {
     })
   }
 
-  private canStart(providerKey: string, limits: QueueLimits) {
+  private canStart(providerKey: string, limits: QueueLimits, skipProviderLimit = false) {
     const activeForProvider = this.activeByProvider.get(providerKey) ?? 0
-    return this.active < limits.maxConcurrent && activeForProvider < limits.maxConcurrentPerProvider
+    return this.active < limits.maxConcurrent && (skipProviderLimit || activeForProvider < limits.maxConcurrentPerProvider)
   }
 
   activeTargetCount(providerName: string, targetModel: string) {
@@ -141,7 +145,7 @@ export class ConcurrencyLimiter {
   private drain() {
     for (let index = 0; index < this.queue.length; index += 1) {
       const item = this.queue[index]
-      if (!this.canStart(item.providerKey, item.limits)) {
+      if (!this.canStart(item.providerKey, item.limits, item.skipProviderLimit)) {
         continue
       }
 

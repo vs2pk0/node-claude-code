@@ -3,12 +3,16 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, afterEach, before, test } from 'node:test'
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'node-claude-code-test-'))
 
 interface UpstreamState {
-  requests: Array<Record<string, unknown>>
+  requests: Array<{
+    url: string
+    headers: IncomingHttpHeaders
+    body: Record<string, unknown>
+  }>
   pendingResponses: ServerResponse[]
   streamResponses: ServerResponse[]
   streamClosedCount: number
@@ -214,6 +218,240 @@ test('failed request tokens can be excluded from summary aggregates', () => {
   assert.ok(filtered.recent.some((record: { success: boolean; inputTokens: number }) => !record.success && record.inputTokens === 100))
 })
 
+test('claude code forward sends Anthropic payload and returns upstream response unchanged', async () => {
+  resetUpstreamState()
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    APIKEY: '',
+    Providers: [
+      {
+        name: 'llmapi',
+        api_base_url: `${upstreamUrl}/v1/messages/`,
+        api_key: 'provider-key',
+        models: ['claude-opus-4-7'],
+        model_formats: {
+          'claude-opus-4-7': 'claude-code',
+        },
+      },
+    ],
+    Router: {
+      ...current.Router,
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: ['llmapi,claude-opus-4-7'],
+        strategy: 'sequence',
+        delayMs: 0,
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
+    },
+    Concurrency: {
+      enabled: true,
+      maxConcurrent: 1,
+      maxConcurrentPerProvider: 1,
+      maxQueueSize: 4,
+      queueTimeoutMs: 5000,
+    },
+  })
+
+  const response = await fetch(`${proxyUrl}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  })
+
+  assert.equal(response.status, 200)
+  const data = await response.json() as Record<string, unknown>
+  assert.equal(data.type, 'message')
+  assert.equal(data.model, 'claude-opus-4-7')
+
+  assert.equal(upstreamState.requests.length, 1)
+  const upstreamRequest = upstreamState.requests[0]
+  assert.equal(upstreamRequest.url, '/v1/messages')
+  assert.equal(upstreamRequest.headers['x-api-key'], 'provider-key')
+  assert.equal(upstreamRequest.headers.authorization, 'Bearer provider-key')
+  assert.equal(upstreamRequest.headers['anthropic-version'], '2023-06-01')
+  assert.equal(upstreamRequest.headers.accept, 'application/json')
+  assert.equal(upstreamRequest.headers['accept-encoding'], 'identity')
+  assert.equal(upstreamRequest.body.model, 'claude-opus-4-7')
+  assert.deepEqual(upstreamRequest.body.messages, [{ role: 'user', content: 'hello' }])
+})
+
+test('claude code forward starts raw response before upstream body ends', async () => {
+  resetUpstreamState()
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    APIKEY: '',
+    Providers: [
+      {
+        name: 'llmapi-slow',
+        api_base_url: `${upstreamUrl}/v1/messages`,
+        api_key: 'provider-key',
+        models: ['claude-opus-4-7'],
+        claude_code_forward: true,
+      },
+    ],
+    Router: {
+      ...current.Router,
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: ['llmapi-slow,claude-opus-4-7'],
+        strategy: 'sequence',
+        delayMs: 0,
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
+    },
+  })
+
+  const startedAt = Date.now()
+  const response = await Promise.race([
+    fetch(`${proxyUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'slow raw body' }],
+      }),
+    }),
+    sleep(120).then(() => undefined),
+  ])
+
+  assert.ok(response, 'proxy should forward upstream headers before the delayed upstream body finishes')
+  assert.equal(response.status, 200)
+  assert.ok(response.body)
+
+  const reader = response.body.getReader()
+  const firstChunk = await Promise.race([reader.read(), sleep(120).then(() => undefined)])
+  assert.ok(firstChunk && !firstChunk.done, 'proxy should forward the first upstream chunk immediately')
+  assert.ok(Date.now() - startedAt < 240)
+
+  const decoder = new TextDecoder()
+  let rawText = decoder.decode(firstChunk.value)
+  for (;;) {
+    const nextChunk = await reader.read()
+    if (nextChunk.done) {
+      break
+    }
+    rawText += decoder.decode(nextChunk.value, { stream: true })
+  }
+  rawText += decoder.decode()
+
+  const data = JSON.parse(rawText) as Record<string, unknown>
+  assert.equal(data.model, 'claude-opus-4-7')
+})
+
+test('claude code forward appends messages path when provider uses base URL', async () => {
+  resetUpstreamState()
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    APIKEY: '',
+    Providers: [
+      {
+        name: 'llmapi-base',
+        api_base_url: upstreamUrl,
+        api_key: 'provider-key',
+        models: ['claude-opus-4-7'],
+        claude_code_forward: true,
+      },
+    ],
+    Router: {
+      ...current.Router,
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: ['llmapi-base,claude-opus-4-7'],
+        strategy: 'sequence',
+        delayMs: 0,
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
+    },
+    Concurrency: {
+      enabled: true,
+      maxConcurrent: 1,
+      maxConcurrentPerProvider: 1,
+      maxQueueSize: 4,
+      queueTimeoutMs: 5000,
+    },
+  })
+
+  const response = await fetch(`${proxyUrl}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'hello from base url' }],
+    }),
+  })
+
+  assert.equal(response.status, 200)
+  await response.json()
+  assert.equal(upstreamState.requests.length, 1)
+  assert.equal(upstreamState.requests[0].url, '/v1/messages')
+  assert.equal(upstreamState.requests[0].body.model, 'claude-opus-4-7')
+})
+
 function configureProxy(
   providerName: string,
   model: string,
@@ -284,14 +522,40 @@ function requestRecord(input: { success: boolean; inputTokens: number; outputTok
 }
 
 async function handleUpstreamRequest(req: IncomingMessage, res: ServerResponse) {
-  if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
+  if (req.method !== 'POST' || (req.url !== '/v1/chat/completions' && req.url !== '/v1/messages')) {
     res.statusCode = 404
     res.end()
     return
   }
 
   const body = await readJsonBody(req)
-  upstreamState.requests.push(body)
+  upstreamState.requests.push({
+    url: req.url,
+    headers: req.headers,
+    body,
+  })
+
+  if (req.url === '/v1/messages') {
+    if (hasMessageContent(body, 'slow raw body')) {
+      writeDelayedClaudeMessage(res, String(body.model ?? 'model'))
+      return
+    }
+
+    writeJson(res, {
+      id: 'msg_forwarded',
+      type: 'message',
+      role: 'assistant',
+      model: body.model,
+      content: [{ type: 'text', text: 'raw anthropic ok' }],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      usage: {
+        input_tokens: 3,
+        output_tokens: 2,
+      },
+    })
+    return
+  }
 
   if (body.stream === true) {
     upstreamState.streamResponses.push(res)
@@ -307,6 +571,25 @@ async function handleUpstreamRequest(req: IncomingMessage, res: ServerResponse) 
   }
 
   upstreamState.pendingResponses.push(res)
+}
+
+function hasMessageContent(body: Record<string, unknown>, content: string) {
+  const messages = body.messages
+  return Array.isArray(messages) && messages.some((message) => {
+    const record = message as Record<string, unknown>
+    return record.content === content
+  })
+}
+
+function writeDelayedClaudeMessage(res: ServerResponse, model: string) {
+  res.writeHead(200, {
+    'content-type': 'application/json; charset=utf-8',
+  })
+  res.write(`{"id":"msg_delayed","type":"message","role":"assistant","model":${JSON.stringify(model)},`)
+  setTimeout(() => {
+    res.write('"content":[{"type":"text","text":"delayed ok"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}')
+    res.end()
+  }, 260)
 }
 
 async function readJsonBody(req: IncomingMessage) {

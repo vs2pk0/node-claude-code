@@ -399,6 +399,21 @@ pre,
   width: 78px;
 }
 
+.route-conflict-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  color: #8a5d00;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.route-conflict-note .ant-tag {
+  flex: 0 0 auto;
+  margin-inline-end: 0;
+}
+
 .full-input {
   width: 100%;
 }
@@ -450,6 +465,10 @@ pre,
   background: #fbfdfd;
 }
 
+.models-form-item {
+  grid-column: 1 / -1;
+}
+
 .model-row-list {
   display: grid;
   gap: 8px;
@@ -458,7 +477,7 @@ pre,
 
 .model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.85fr) 34px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.7fr) 150px 34px;
   gap: 8px;
   align-items: center;
   min-width: 0;
@@ -592,6 +611,10 @@ pre,
 
   .route-delay-input {
     width: 100%;
+  }
+
+  .model-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
