@@ -2,10 +2,21 @@
 import { computed, ref } from 'vue'
 import { CodeOutlined, CopyOutlined, InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
+import { deleteRequestRecord, resetStats } from '@/api'
+import RecentRequestsTable from '@/components/RecentRequestsTable.vue'
 import { useAppState } from '@/composables/useAppState'
-import type { RouterRuleConfig } from '@/types'
+import type { RequestRecord, RouterRuleConfig } from '@/types'
+import { formatNumber, readError } from '@/utils/format'
 
-const { draft, routeOptions, modelAliasConflicts, modelConflictWarningsEnabled, originUrl } = useAppState()
+const {
+  draft,
+  routeOptions,
+  modelAliasConflicts,
+  modelConflictWarningsEnabled,
+  originUrl,
+  summary,
+  loadStats,
+} = useAppState()
 
 const claudeConfigOpen = ref(false)
 const strategyOptions = [
@@ -119,6 +130,26 @@ function generateLocalApiKey() {
 
   draft.value.APIKEY = `sk-ncc-${randomBase64Url(32)}`
   message.success('已生成新的 Local API Key')
+}
+
+async function resetRecentRequests() {
+  try {
+    const result = await resetStats()
+    await loadStats()
+    message.success(`最近请求已重置，删除 ${formatNumber(result.deleted)} 条记录`)
+  } catch (error) {
+    message.error(readError(error))
+  }
+}
+
+async function removeRequest(record: RequestRecord) {
+  try {
+    await deleteRequestRecord(record.id)
+    await loadStats()
+    message.success('请求记录已删除')
+  } catch (error) {
+    message.error(readError(error))
+  }
 }
 
 function randomBase64Url(byteLength: number) {
@@ -269,6 +300,12 @@ function randomBase64Url(byteLength: number) {
         </div>
       </a-form>
     </a-card>
+
+    <RecentRequestsTable
+      :records="summary?.recent || []"
+      @reset="resetRecentRequests"
+      @remove="removeRequest"
+    />
 
     <a-card class="tool-card">
       <template #title>显示设置</template>
