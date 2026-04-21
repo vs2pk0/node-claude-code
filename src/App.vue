@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import AppLayout from '@/components/layout/AppLayout.vue'
 </script>
 
 <template>
   <a-config-provider
+    :locale="zhCN"
     :theme="{
       token: {
         borderRadius: 6,

@@ -6,6 +6,7 @@ import { message } from 'ant-design-vue'
 import { useAppState } from '@/composables/useAppState'
 import type { ModelFormatMode, ProviderConfig, RouterStrategy } from '@/types'
 import { readError } from '@/utils/format'
+import { createTablePagination } from '@/utils/pagination'
 
 const {
   draft,
@@ -28,6 +29,7 @@ const {
 
 const curlImportOpen = ref(false)
 const curlText = ref('')
+const providerPagination = createTablePagination(12, ['12', '24', '48', '96'])
 
 interface ProviderRow {
   provider: ProviderConfig
@@ -194,7 +196,7 @@ function providerStableKey(provider: ProviderConfig) {
       size="middle"
       :columns="providerColumns"
       :data-source="providerRows"
-      :pagination="{ pageSize: 12, size: 'small', showSizeChanger: true, pageSizeOptions: ['12', '24', '48'] }"
+      :pagination="providerPagination"
       :row-key="providerRowKey"
       :scroll="{ x: 1000 }"
     >

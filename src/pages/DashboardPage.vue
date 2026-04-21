@@ -6,8 +6,11 @@ import { deleteModelStats, deleteRequestRecord, resetStats } from '@/api'
 import { useAppState } from '@/composables/useAppState'
 import type { RequestRecord, StatsSummary } from '@/types'
 import { formatNumber, formatTime, readError } from '@/utils/format'
+import { createTablePagination } from '@/utils/pagination'
 
 const { summary, successRate, loadStats, resolveModelAlias, resolveProviderName } = useAppState()
+const modelPagination = createTablePagination(8)
+const requestPagination = createTablePagination(8)
 
 const requestColumns: TableColumnsType<RequestRecord> = [
   {
@@ -224,7 +227,7 @@ async function removeRequest(record: RequestRecord) {
           size="middle"
           :columns="modelColumns"
           :data-source="summary?.byModel || []"
-          :pagination="{ pageSize: 8, size: 'small' }"
+          :pagination="modelPagination"
           :scroll="{ x: 860 }"
           :row-key="modelRowKey"
         >
@@ -279,7 +282,7 @@ async function removeRequest(record: RequestRecord) {
           size="middle"
           :columns="requestColumns"
           :data-source="summary?.recent || []"
-          :pagination="{ pageSize: 8, size: 'small' }"
+          :pagination="requestPagination"
           :scroll="{ x: 1090 }"
           row-key="id"
         >
