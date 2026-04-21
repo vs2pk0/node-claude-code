@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { Router, type Request, type Response } from 'express'
-import { ProxyAgent } from 'undici'
+import { Agent, ProxyAgent, fetch as undiciFetch } from 'undici'
 import {
   anthropicSseEvent,
   anthropicToOpenAi,
@@ -46,6 +46,7 @@ const apiKeySequenceByProvider = new Map<string, number>()
 const activeApiKeys = new Map<string, number>()
 let cachedProxyUrl = ''
 let cachedProxyAgent: ProxyAgent | undefined
+let cachedDirectAgent: Agent | undefined
 
 export function createProxyRouter() {
   const router = Router()
@@ -298,8 +299,8 @@ async function streamOpenAi(
         firstByteMs = Date.now() - upstreamRequest.upstreamStartedAt
       }
       const text = decoder.decode(chunk, { stream: true })
+      await writeResponseChunk(res, text, signal)
       outputText += collectOpenAiStreamText(parseEvents(text))
-      res.write(text)
     }
   } catch (error) {
     status = errorStatus(error, signal)
@@ -308,7 +309,11 @@ async function streamOpenAi(
       prepareSse(res, status)
     }
     if (!isClientClosed(error, signal) && canWriteResponse(res)) {
-      res.write(`event: error\ndata: ${JSON.stringify({ message: readableError(error) })}\n\n`)
+      try {
+        await writeResponseChunk(res, `event: error\ndata: ${JSON.stringify({ message: readableError(error) })}\n\n`, signal)
+      } catch {
+        // Client went away while sending the error frame.
+      }
     }
   } finally {
     upstreamCleanup()
@@ -375,7 +380,8 @@ async function streamAnthropicFromOpenAi(
     status = upstream.status
     prepareSse(res, upstream.status)
 
-    res.write(
+    await writeResponseChunk(
+      res,
       anthropicSseEvent('message_start', {
         type: 'message_start',
         message: {
@@ -392,6 +398,7 @@ async function streamAnthropicFromOpenAi(
           },
         },
       }),
+      signal,
     )
 
     for await (const chunk of streamBody(upstream)) {
@@ -401,6 +408,7 @@ async function streamAnthropicFromOpenAi(
       }
       const text = decoder.decode(chunk, { stream: true })
       const events = parseEvents(text)
+      const frames: string[] = []
 
       for (const event of events) {
         if (event === '[DONE]') {
@@ -416,7 +424,7 @@ async function streamAnthropicFromOpenAi(
             textBlockStarted = true
             textBlockIndex = blockCounter.next
             blockCounter.next += 1
-            res.write(
+            frames.push(
               anthropicSseEvent('content_block_start', {
                 type: 'content_block_start',
                 index: textBlockIndex,
@@ -429,7 +437,7 @@ async function streamAnthropicFromOpenAi(
           }
 
           textOutput += content
-          res.write(
+          frames.push(
             anthropicSseEvent('content_block_delta', {
               type: 'content_block_delta',
               index: textBlockIndex,
@@ -441,7 +449,11 @@ async function streamAnthropicFromOpenAi(
           )
         }
 
-        writeToolDeltas(res, delta.tool_calls, toolBlocks, blockCounter)
+        collectToolDeltaEvents(delta.tool_calls, toolBlocks, blockCounter, frames)
+      }
+
+      if (frames.length) {
+        await writeResponseChunk(res, frames.join(''), signal)
       }
     }
   } catch (error) {
@@ -452,23 +464,30 @@ async function streamAnthropicFromOpenAi(
       prepareSse(res, status)
     }
     if (!isClientClosed(error, signal) && canWriteResponse(res)) {
-      res.write(
-        anthropicSseEvent('error', {
-          type: 'error',
-          error: {
-            type: 'api_error',
-            message: readableError(error),
-          },
-        }),
-      )
+      try {
+        await writeResponseChunk(
+          res,
+          anthropicSseEvent('error', {
+            type: 'error',
+            error: {
+              type: 'api_error',
+              message: readableError(error),
+            },
+          }),
+          signal,
+        )
+      } catch {
+        // Client went away while sending the error frame.
+      }
     }
   } finally {
     upstreamCleanup()
     release()
     const outputTokens = estimateTokens(textOutput || [...toolBlocks.values()].map((tool) => tool.partialJson).join('\n'))
+    const finalFrames: string[] = []
 
     if (textBlockStarted && canWriteResponse(res)) {
-      res.write(
+      finalFrames.push(
         anthropicSseEvent('content_block_stop', {
           type: 'content_block_stop',
           index: textBlockIndex,
@@ -478,7 +497,7 @@ async function streamAnthropicFromOpenAi(
 
     for (const tool of toolBlocks.values()) {
       if (tool.started && canWriteResponse(res)) {
-        res.write(
+        finalFrames.push(
           anthropicSseEvent('content_block_stop', {
             type: 'content_block_stop',
             index: tool.blockIndex,
@@ -488,7 +507,7 @@ async function streamAnthropicFromOpenAi(
     }
 
     if (!hadError && canWriteResponse(res)) {
-      res.write(
+      finalFrames.push(
         anthropicSseEvent('message_delta', {
           type: 'message_delta',
           delta: {
@@ -500,11 +519,19 @@ async function streamAnthropicFromOpenAi(
           },
         }),
       )
-      res.write(
+      finalFrames.push(
         anthropicSseEvent('message_stop', {
           type: 'message_stop',
         }),
       )
+    }
+    if (finalFrames.length && canWriteResponse(res)) {
+      try {
+        await writeResponseChunk(res, finalFrames.join(''), signal)
+      } catch (error) {
+        status = errorStatus(error, signal)
+        hadError = true
+      }
     }
     if (canWriteResponse(res)) {
       res.end()
@@ -582,7 +609,7 @@ async function forwardClaudeCodeRaw(
         sawFirstByte = true
         firstByteMs = Date.now() - upstreamRequest.upstreamStartedAt
       }
-      res.write(chunk)
+      await writeResponseChunk(res, chunk, signal)
       const text = decoder.decode(chunk, { stream: true })
       if (isStream) {
         collectAnthropicStreamUsage(parseEvents(text), usage)
@@ -624,15 +651,21 @@ async function forwardClaudeCodeRaw(
       }
     }
     if (isStream && !isClientClosed(error, signal) && canWriteResponse(res)) {
-      res.write(
-        anthropicSseEvent('error', {
-          type: 'error',
-          error: {
-            type: 'api_error',
-            message: readableError(error),
-          },
-        }),
-      )
+      try {
+        await writeResponseChunk(
+          res,
+          anthropicSseEvent('error', {
+            type: 'error',
+            error: {
+              type: 'api_error',
+              message: readableError(error),
+            },
+          }),
+          signal,
+        )
+      } catch {
+        // Client went away while sending the error frame.
+      }
     }
     completedAt = Date.now()
   } finally {
@@ -641,14 +674,15 @@ async function forwardClaudeCodeRaw(
     if (canWriteResponse(res)) {
       res.end()
     }
-    const recordedInputTokens = usage.inputTokens || inputTokens || estimateTokens(payload)
+    const success = !hadError && status >= 200 && status < 300
+    const recordedInputTokens = usage.inputTokens || inputTokens || (success ? estimateTokens(payload) : 0)
     recordRequest({
       endpoint: '/v1/messages',
       decision,
       startedAt,
       completedAt,
       status,
-      success: !hadError && status >= 200 && status < 300,
+      success,
       inputTokens: recordedInputTokens,
       outputTokens: usage.outputTokens,
       queueMs,
@@ -728,13 +762,13 @@ async function postJson(
 
   try {
     const upstreamStartedAt = Date.now()
-    const upstream = await fetch(resolveUpstreamUrl(decision.provider.api_base_url, options.format), {
+    const upstream = await undiciFetch(resolveUpstreamUrl(decision.provider.api_base_url, options.format), {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
       signal: upstreamAbort.signal,
       dispatcher: dispatcher(config),
-    } as RequestInit & { dispatcher?: ProxyAgent })
+    })
     const upstreamMs = Date.now() - upstreamStartedAt
     return {
       upstream,
@@ -995,18 +1029,28 @@ function createUpstreamAbort(config: AppConfig, signal?: AbortSignal) {
   }
 }
 
-function dispatcher(config: AppConfig): ProxyAgent | undefined {
+function dispatcher(config: AppConfig): Agent | ProxyAgent {
   const proxyUrl = config.PROXY_URL.trim()
-  if (!proxyUrl) {
-    return undefined
+  if (proxyUrl) {
+    if (cachedProxyUrl !== proxyUrl || !cachedProxyAgent) {
+      cachedProxyUrl = proxyUrl
+      cachedProxyAgent = new ProxyAgent(proxyUrl)
+    }
+
+    return cachedProxyAgent
   }
 
-  if (cachedProxyUrl !== proxyUrl || !cachedProxyAgent) {
+  if (!cachedDirectAgent) {
     cachedProxyUrl = proxyUrl
-    cachedProxyAgent = new ProxyAgent(proxyUrl)
+    cachedDirectAgent = new Agent({
+      connections: 64,
+      keepAliveTimeout: 30_000,
+      keepAliveMaxTimeout: 120_000,
+      pipelining: 1,
+    })
   }
 
-  return cachedProxyAgent
+  return cachedDirectAgent
 }
 
 function isAuthorized(req: Request, config: AppConfig) {
@@ -1096,6 +1140,56 @@ function canWriteResponse(res: Response) {
   return !res.destroyed && !res.writableEnded
 }
 
+async function writeResponseChunk(res: Response, chunk: string | Uint8Array, signal?: AbortSignal) {
+  if (!canWriteResponse(res) || signal?.aborted) {
+    throw signal?.reason ?? clientClosedError()
+  }
+
+  if (res.write(chunk)) {
+    return
+  }
+
+  await waitForResponseDrain(res, signal)
+}
+
+function waitForResponseDrain(res: Response, signal?: AbortSignal) {
+  if (!canWriteResponse(res) || signal?.aborted) {
+    return Promise.reject(signal?.reason ?? clientClosedError())
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      res.off('drain', onDrain)
+      res.off('close', onClose)
+      res.off('finish', onClose)
+      res.off('error', onError)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    const onDrain = () => {
+      cleanup()
+      resolve()
+    }
+    const onClose = () => {
+      cleanup()
+      reject(signal?.reason ?? clientClosedError())
+    }
+    const onError = (error: unknown) => {
+      cleanup()
+      reject(error instanceof Error ? error : clientClosedError())
+    }
+    const onAbort = () => {
+      cleanup()
+      reject(signal?.reason ?? clientClosedError())
+    }
+
+    res.once('drain', onDrain)
+    res.once('close', onClose)
+    res.once('finish', onClose)
+    res.once('error', onError)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 async function* streamBody(response: globalThis.Response): AsyncGenerator<Uint8Array> {
   if (!response.body) {
     return
@@ -1173,7 +1267,7 @@ function recordRequest(input: {
     error: input.error,
   }
 
-  storage.recordRequest(record)
+  storage.enqueueRequest(record)
 }
 
 function handleProxyError(
@@ -1261,11 +1355,11 @@ function collectAnthropicStreamUsage(
   }
 }
 
-function writeToolDeltas(
-  res: Response,
+function collectToolDeltaEvents(
   rawToolCalls: unknown,
   toolBlocks: Map<number, { blockIndex: number; id: string; name: string; partialJson: string; started: boolean }>,
   blockCounter: { next: number },
+  frames: string[],
 ) {
   if (!Array.isArray(rawToolCalls)) {
     return
@@ -1296,7 +1390,7 @@ function writeToolDeltas(
     }
 
     if (!tool.started) {
-      res.write(
+      frames.push(
         anthropicSseEvent('content_block_start', {
           type: 'content_block_start',
           index: tool.blockIndex,
@@ -1313,7 +1407,7 @@ function writeToolDeltas(
 
     if (typeof fn.arguments === 'string' && fn.arguments) {
       tool.partialJson += fn.arguments
-      res.write(
+      frames.push(
         anthropicSseEvent('content_block_delta', {
           type: 'content_block_delta',
           index: tool.blockIndex,

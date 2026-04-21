@@ -126,6 +126,36 @@ test('loadBalance strategy prefers the target with fewer active requests', async
   }
 })
 
+test('long context priority routes when messages reach threshold', () => {
+  const config = parseConfig({
+    ...defaultConfig,
+    Providers: [provider('p1', ['default-model']), provider('p2', ['long-model'])],
+    Router: {
+      ...defaultConfig.Router,
+      default: {
+        model: 'route-default-model',
+        targets: ['p1,default-model'],
+        strategy: 'sequence',
+      },
+      longContext: {
+        model: 'route-long-model',
+        targets: ['p2,long-model'],
+        strategy: 'sequence',
+      },
+      longContextThreshold: 4,
+    },
+  })
+
+  const decision = resolveRoute(config, {
+    model: 'route-default-model',
+    messages: [{ role: 'user', content: 'a'.repeat(16) }],
+  })
+
+  assert.equal(decision.routeKey, 'longContext')
+  assert.equal(decision.providerName, 'p2')
+  assert.equal(decision.targetModel, 'long-model')
+})
+
 test('models endpoint includes editable Claude Code route model ids', () => {
   const config = parseConfig({
     ...defaultConfig,

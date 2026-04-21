@@ -9,6 +9,7 @@
     "start": "NODE_ENV=production node dist-server/index.js",
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "typecheck": "vue-tsc -b && tsc -p tsconfig.server.json --noEmit",
+    "bench:latency": "tsx scripts/latency-benchmark.ts",
     "preview": "npm run build && npm run start"
   },
   "dependencies": {

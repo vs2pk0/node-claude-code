@@ -312,6 +312,17 @@ test('summary groups provider model key statistics independently', () => {
   )
 })
 
+test('queued request records flush before summary queries', () => {
+  storage.deleteAllRequests()
+
+  storage.enqueueRequest(requestRecord({ success: true, inputTokens: 5, outputTokens: 3, status: 200 }))
+
+  const summary = storage.getSummary()
+  assert.equal(summary.totals.requests, 1)
+  assert.equal(summary.totals.inputTokens, 5)
+  assert.equal(summary.recent[0].outputTokens, 3)
+})
+
 test('claude code forward sends Anthropic payload and returns upstream response unchanged', async () => {
   resetUpstreamState()
   const current = storage.getConfig()
@@ -390,6 +401,81 @@ test('claude code forward sends Anthropic payload and returns upstream response 
   assert.equal(upstreamRequest.headers['accept-encoding'], 'identity')
   assert.equal(upstreamRequest.body.model, 'claude-opus-4-7')
   assert.deepEqual(upstreamRequest.body.messages, [{ role: 'user', content: 'hello' }])
+})
+
+test('failed claude code forward without usage records zero input tokens', async () => {
+  resetUpstreamState()
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    APIKEY: '',
+    Providers: [
+      {
+        name: 'llmapi-error',
+        api_base_url: `${upstreamUrl}/v1/messages`,
+        api_protocol: 'anthropic-messages',
+        api_key: 'provider-key',
+        models: ['claude-opus-4-7'],
+      },
+    ],
+    Router: {
+      ...current.Router,
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: ['llmapi-error,claude-opus-4-7'],
+        strategy: 'sequence',
+        delayMs: 0,
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
+    },
+    Concurrency: {
+      enabled: true,
+      maxConcurrent: 1,
+      maxConcurrentPerProvider: 1,
+      maxQueueSize: 4,
+      queueTimeoutMs: 5000,
+    },
+  })
+
+  const response = await fetch(`${proxyUrl}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'direct failure without usage' }],
+    }),
+  })
+
+  assert.equal(response.status, 502)
+  await response.json()
+
+  await waitFor(() => {
+    return storage.getSummary().recent.some((record: { provider: string }) => record.provider === 'llmapi-error')
+  }, 'failed direct request should be recorded')
+
+  const record = storage.getSummary().recent.find((item: { provider: string }) => item.provider === 'llmapi-error')
+  assert.ok(record)
+  assert.equal(record.status, 502)
+  assert.equal(record.inputTokens, 0)
 })
 
 test('openai protocol ignores legacy claude code model format flag', async () => {
@@ -1086,6 +1172,14 @@ async function handleUpstreamRequest(req: IncomingMessage, res: ServerResponse) 
   })
 
   if (messagePaths.has(req.url ?? '')) {
+    if (hasMessageContent(body, 'direct failure without usage')) {
+      res.writeHead(502, {
+        'content-type': 'application/json; charset=utf-8',
+      })
+      res.end(JSON.stringify({ error: { message: 'upstream failed without usage' } }))
+      return
+    }
+
     if (hasMessageContent(body, 'slow raw body')) {
       writeDelayedClaudeMessage(res, String(body.model ?? 'model'))
       return

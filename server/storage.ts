@@ -19,6 +19,8 @@ db.pragma('journal_mode = WAL')
 db.pragma('busy_timeout = 5000')
 
 let cachedConfig: AppConfig | undefined
+const pendingRequestRecords: RequestRecordInput[] = []
+let requestFlushScheduled = false
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS settings (
@@ -53,6 +55,19 @@ ensureRequestColumn('queue_ms', 'INTEGER NOT NULL DEFAULT 0')
 ensureRequestColumn('upstream_ms', 'INTEGER NOT NULL DEFAULT 0')
 ensureRequestColumn('first_byte_ms', 'INTEGER NOT NULL DEFAULT 0')
 
+const insertRequestStatement = db.prepare(`
+  INSERT INTO requests (
+    id, created_at, endpoint, provider, api_key, model, target_model, route_key,
+    status, success, latency_ms, queue_ms, upstream_ms, first_byte_ms,
+    input_tokens, output_tokens, total_tokens, error
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+
+process.once('exit', () => {
+  flushPendingRequests()
+})
+
 export const storage = {
   dataDir,
   settingsPath,
@@ -60,6 +75,8 @@ export const storage = {
   getConfig,
   saveConfig,
   recordRequest,
+  enqueueRequest,
+  flushPendingRequests,
   getSummary,
   getRecentRequests,
   deleteAllRequests,
@@ -115,16 +132,7 @@ function recordRequest(input: RequestRecordInput): RequestRecord {
   const upstreamMs = input.upstreamMs ?? 0
   const firstByteMs = input.firstByteMs ?? 0
 
-  db.prepare(
-    `
-      INSERT INTO requests (
-        id, created_at, endpoint, provider, api_key, model, target_model, route_key,
-        status, success, latency_ms, queue_ms, upstream_ms, first_byte_ms,
-        input_tokens, output_tokens, total_tokens, error
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-  ).run(
+  insertRequestStatement.run(
     id,
     createdAt,
     input.endpoint,
@@ -157,7 +165,35 @@ function recordRequest(input: RequestRecordInput): RequestRecord {
   }
 }
 
+function enqueueRequest(input: RequestRecordInput) {
+  pendingRequestRecords.push(input)
+  if (requestFlushScheduled) {
+    return
+  }
+
+  requestFlushScheduled = true
+  setImmediate(flushPendingRequests)
+}
+
+function flushPendingRequests() {
+  requestFlushScheduled = false
+  if (!pendingRequestRecords.length) {
+    return 0
+  }
+
+  const batch = pendingRequestRecords.splice(0, pendingRequestRecords.length)
+  const insertBatch = db.transaction((records: RequestRecordInput[]) => {
+    for (const record of records) {
+      recordRequest(record)
+    }
+  })
+
+  insertBatch(batch)
+  return batch.length
+}
+
 function getSummary(): StatsSummary {
+  flushPendingRequests()
   const config = getConfig()
   const tokenSums = summaryTokenSums(config.Stats.excludeFailedTokens)
   const totals = db
@@ -262,6 +298,7 @@ function sumTokenColumn(column: 'input_tokens' | 'output_tokens' | 'total_tokens
 }
 
 function getRecentRequests(limit = 200): RequestRecord[] {
+  flushPendingRequests()
   type RequestRow = Omit<RequestRecord, 'success'> & { success: number }
 
   const rows = db
@@ -309,6 +346,7 @@ function ensureRequestColumn(column: string, definition: string) {
 }
 
 function deleteAllRequests() {
+  flushPendingRequests()
   const result = db.prepare('DELETE FROM requests').run()
   return {
     deleted: result.changes,
@@ -316,6 +354,7 @@ function deleteAllRequests() {
 }
 
 function deleteRequest(id: string) {
+  flushPendingRequests()
   const result = db.prepare('DELETE FROM requests WHERE id = ?').run(id)
   return {
     deleted: result.changes,
@@ -323,6 +362,7 @@ function deleteRequest(id: string) {
 }
 
 function deleteModelStats(input: { provider: string; model: string; targetModel: string }) {
+  flushPendingRequests()
   const result = db
     .prepare(
       `

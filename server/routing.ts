@@ -83,14 +83,18 @@ export function httpError(status: number, message: string) {
 }
 
 function choosePriorityRouteKey(config: AppConfig, body: Record<string, unknown>): RouterRouteKey | undefined {
-  const inputTokens = estimateTokens(body.messages)
+  const messages = body.messages
   const threshold = config.Router.longContextThreshold
 
-  if (hasImage(body.messages) && hasRouterTargets(config.Router.image)) {
+  if (hasRouterTargets(config.Router.image) && hasImage(messages)) {
     return 'image'
   }
 
-  if (threshold > 0 && inputTokens >= threshold && hasRouterTargets(config.Router.longContext)) {
+  if (
+    threshold > 0 &&
+    hasRouterTargets(config.Router.longContext) &&
+    estimateTokens(messages) >= threshold
+  ) {
     return 'longContext'
   }
 

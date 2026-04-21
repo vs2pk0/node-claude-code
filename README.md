@@ -15,6 +15,9 @@
 - 统计 provider、模型、请求状态、耗时、输入 token、输出 token。
 - 支持 `maxtoken` transformer 的 `max_tokens` 覆盖。
 - 支持本地 `APIKEY` 校验，可配合 Claude Code 的 `ANTHROPIC_AUTH_TOKEN`。
+- Anthropic Messages Provider 支持直转，避免 OpenAI/Anthropic 格式互转带来的额外处理。
+- 上游请求使用 keep-alive 连接池，减少重复 DNS/TLS/建连波动。
+- 代理请求统计异步批量写入 SQLite，降低多并发流式请求的事件循环阻塞。
 
 ## 启动
 
@@ -46,6 +49,38 @@ export ANTHROPIC_AUTH_TOKEN="local-router-token"
 npm run build
 npm run start
 ```
+
+## 延迟压测
+
+可以用 `bench:latency` 对比直连上游、Claude Code 直转、OpenAI 转 Anthropic 三类路径的响应耗时：
+脚本会按轮次交错执行不同用例，例如 `direct#1 -> router#1 -> direct#2 -> router#2`，减少时间片波动带来的偏差。
+建议先用 `BENCH_CONCURRENCY=1` 做基准测试，避免并发排队、Provider 限速或多 Key 负载策略影响判断。
+
+```bash
+BENCH_ROUTER_API_KEY="local-router-token" \
+BENCH_ROUTER_FORWARD_MODEL="claude-opus-4-7" \
+BENCH_ROUTER_CONVERT_MODEL="claude-sonnet-4-6" \
+BENCH_DIRECT_URL="https://example.com/v1/messages" \
+BENCH_DIRECT_MODEL="claude-opus-4-7" \
+BENCH_DIRECT_API_KEY="sk-xxx" \
+npm run bench:latency
+```
+
+常用参数：
+
+- `BENCH_ITERATIONS`：每个用例请求次数，默认 `3`。
+- `BENCH_CONCURRENCY`：并发数，默认 `1`。
+- `BENCH_STREAM`：是否使用流式请求，默认 `true`。
+- `BENCH_PROMPT`：测试提示词。
+- `BENCH_DIRECT_URL`：直连上游地址；Anthropic 协议可填写 Base URL，脚本会按 Router 规则补全 `/v1/messages`。
+- `BENCH_CASES`：JSON 数组，自定义多个测试用例。
+
+如果 Router 明显慢于直连，优先看最近请求里的耗时拆分：
+
+- `排队` 接近 0，但 `发起上游`/`首包` 很高：主要是上游网络或模型首包。
+- `排队` 高：调大并发控制或检查 Provider 限速。
+- `总耗时` 明显高于首包：主要是模型生成或客户端读取速度。
+- OpenAI Provider 比 Anthropic Provider 慢：优先把真实 Provider 配成 `Anthropic Messages` 协议直转。
 
 ## 数据文件
 
