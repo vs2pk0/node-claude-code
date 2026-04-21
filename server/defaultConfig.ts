@@ -14,6 +14,7 @@ export const defaultConfig: AppConfig = {
     {
       name: 'qclaw',
       api_base_url: 'http://127.0.0.1:19000/proxy/llm/chat/completions',
+      api_protocol: 'openai-chat',
       api_key: '',
       api_keys: [],
       api_key_names: [],
@@ -42,6 +43,7 @@ export const defaultConfig: AppConfig = {
     {
       name: 'baishan',
       api_base_url: 'https://api.edgefn.net/v1/chat/completions',
+      api_protocol: 'openai-chat',
       api_key: '',
       api_keys: [],
       api_key_names: [],

@@ -173,9 +173,37 @@ test('provider format settings are normalized with default fallback', () => {
     ],
   })
 
+  assert.equal(config.Providers[0].api_protocol, 'anthropic-messages')
   assert.equal(config.Providers[0].claude_code_forward, true)
   assert.equal(config.Providers[0].model_formats?.m1, 'claude-code')
   assert.equal(config.Providers[0].model_formats?.m2, 'default')
+})
+
+test('provider api protocol is normalized with legacy forward compatibility', () => {
+  const legacyForwardConfig = parseConfig({
+    ...defaultConfig,
+    Providers: [
+      {
+        ...provider('legacy-forward', ['m1']),
+        claude_code_forward: true,
+      },
+    ],
+  })
+  const explicitOpenAiConfig = parseConfig({
+    ...defaultConfig,
+    Providers: [
+      {
+        ...provider('explicit-openai', ['m2']),
+        api_protocol: 'openai-chat',
+        claude_code_forward: true,
+      },
+    ],
+  })
+
+  assert.equal(legacyForwardConfig.Providers[0].api_protocol, 'anthropic-messages')
+  assert.equal(legacyForwardConfig.Providers[0].claude_code_forward, true)
+  assert.equal(explicitOpenAiConfig.Providers[0].api_protocol, 'openai-chat')
+  assert.equal(explicitOpenAiConfig.Providers[0].claude_code_forward, false)
 })
 
 test('provider api keys are normalized from legacy and multi-key settings', () => {

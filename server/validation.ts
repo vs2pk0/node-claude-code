@@ -3,12 +3,14 @@ import type { AppConfig } from './types.js'
 
 const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']).catch('info')
 const modelFormatModeSchema = z.enum(['default', 'claude-code']).catch('default')
+const apiProtocolSchema = z.enum(['openai-chat', 'anthropic-messages']).catch('openai-chat')
 const routeStrategySchema = z.enum(['sequence', 'loadBalance', 'random']).catch('sequence')
 
 const providerSchema = z
   .object({
     name: z.string().trim().min(1, 'Provider name is required'),
     api_base_url: z.string().trim().min(1, 'Provider API base URL is required'),
+    api_protocol: apiProtocolSchema.optional(),
     api_key: z.string().default(''),
     api_keys: z.array(z.string()).default([]),
     api_key_names: z.array(z.string()).default([]),
@@ -28,12 +30,15 @@ const providerSchema = z
       provider.api_key_disabled,
       provider.api_key,
     )
+    const apiProtocol = provider.api_protocol ?? (provider.claude_code_forward ? 'anthropic-messages' : 'openai-chat')
     return {
       ...provider,
+      api_protocol: apiProtocol,
       api_key: apiKeyEntries.keys.find((_, index) => !apiKeyEntries.disabled[index]) ?? '',
       api_keys: apiKeyEntries.keys,
       api_key_names: apiKeyEntries.names,
       api_key_disabled: apiKeyEntries.disabled,
+      claude_code_forward: apiProtocol === 'anthropic-messages',
     }
   })
 

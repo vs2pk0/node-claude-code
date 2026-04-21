@@ -1,10 +1,12 @@
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type RouterStrategy = 'sequence' | 'loadBalance' | 'random'
 export type ModelFormatMode = 'default' | 'claude-code'
+export type ApiProtocol = 'openai-chat' | 'anthropic-messages'
 
 export interface ProviderConfig {
   name: string
   api_base_url: string
+  api_protocol: ApiProtocol
   api_key: string
   api_keys: string[]
   api_key_names: string[]

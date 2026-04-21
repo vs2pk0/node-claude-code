@@ -23,6 +23,7 @@ let upstreamUrl = ''
 let proxyServer: Server
 let upstreamServer: Server
 let storage: any
+let resolveUpstreamUrl: (apiBaseUrl: string, format?: 'openai' | 'claude-code') => string
 
 const upstreamState: UpstreamState = {
   requests: [],
@@ -36,7 +37,9 @@ before(async () => {
   upstreamUrl = await listen(upstreamServer)
 
   const express = (await import('express')).default
-  const { createProxyRouter } = await import('../server/proxy.ts')
+  const proxy = await import('../server/proxy.ts')
+  const { createProxyRouter } = proxy
+  resolveUpstreamUrl = proxy.resolveUpstreamUrl
   storage = (await import('../server/storage.ts')).storage
 
   const app = express()
@@ -320,11 +323,9 @@ test('claude code forward sends Anthropic payload and returns upstream response 
       {
         name: 'llmapi',
         api_base_url: `${upstreamUrl}/v1/messages/`,
+        api_protocol: 'anthropic-messages',
         api_key: 'provider-key',
         models: ['claude-opus-4-7'],
-        model_formats: {
-          'claude-opus-4-7': 'claude-code',
-        },
       },
     ],
     Router: {
@@ -389,6 +390,95 @@ test('claude code forward sends Anthropic payload and returns upstream response 
   assert.equal(upstreamRequest.headers['accept-encoding'], 'identity')
   assert.equal(upstreamRequest.body.model, 'claude-opus-4-7')
   assert.deepEqual(upstreamRequest.body.messages, [{ role: 'user', content: 'hello' }])
+})
+
+test('openai protocol ignores legacy claude code model format flag', async () => {
+  resetUpstreamState()
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    APIKEY: '',
+    Providers: [
+      {
+        name: 'openai-provider',
+        api_base_url: `${upstreamUrl}/v1/chat/completions`,
+        api_protocol: 'openai-chat',
+        api_key: 'provider-key',
+        models: ['openai-model'],
+        model_formats: {
+          'openai-model': 'claude-code',
+        },
+      },
+    ],
+    Router: {
+      ...current.Router,
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: ['openai-provider,openai-model'],
+        strategy: 'sequence',
+        delayMs: 0,
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
+    },
+    Concurrency: {
+      enabled: true,
+      maxConcurrent: 1,
+      maxConcurrentPerProvider: 1,
+      maxQueueSize: 4,
+      queueTimeoutMs: 5000,
+    },
+  })
+
+  const responsePromise = fetch(`${proxyUrl}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  })
+
+  await waitFor(() => upstreamState.pendingResponses.length === 1, 'openai protocol request should reach chat completions')
+
+  assert.equal(upstreamState.requests.length, 1)
+  const upstreamRequest = upstreamState.requests[0]
+  assert.equal(upstreamRequest.url, '/v1/chat/completions')
+  assert.equal(upstreamRequest.headers.authorization, 'Bearer provider-key')
+  assert.equal(upstreamRequest.headers['x-api-key'], undefined)
+  assert.equal(upstreamRequest.body.model, 'openai-model')
+  assert.deepEqual(upstreamRequest.body.messages, [{ role: 'user', content: 'hello' }])
+
+  writeJson(upstreamState.pendingResponses.shift()!, {
+    id: 'chatcmpl-openai-protocol',
+    choices: [{ message: { role: 'assistant', content: 'converted ok' } }],
+    usage: { prompt_tokens: 4, completion_tokens: 2 },
+  })
+
+  const response = await responsePromise
+  assert.equal(response.status, 200)
+  const data = await response.json() as Record<string, unknown>
+  assert.equal(data.type, 'message')
+  assert.equal(data.model, 'claude-sonnet-4-6')
 })
 
 test('provider api key sequence rotates keys and records the selected key', async () => {
@@ -809,6 +899,98 @@ test('claude code forward appends messages path when provider uses base URL', as
   assert.equal(upstreamState.requests[0].body.model, 'claude-opus-4-7')
 })
 
+test('claude code forward appends messages path under anthropic-compatible base URL', async () => {
+  resetUpstreamState()
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    APIKEY: '',
+    Providers: [
+      {
+        name: 'anthropic-base',
+        api_base_url: `${upstreamUrl}/apps/anthropic`,
+        api_protocol: 'anthropic-messages',
+        api_key: 'provider-key',
+        models: ['claude-opus-4-7'],
+      },
+    ],
+    Router: {
+      ...current.Router,
+      default: {
+        model: 'claude-sonnet-4-6',
+        targets: ['anthropic-base,claude-opus-4-7'],
+        strategy: 'sequence',
+        delayMs: 0,
+      },
+      background: {
+        ...current.Router.background,
+        targets: [],
+      },
+      think: {
+        ...current.Router.think,
+        targets: [],
+      },
+      longContext: {
+        ...current.Router.longContext,
+        targets: [],
+      },
+      image: {
+        ...current.Router.image,
+        targets: [],
+      },
+    },
+    Concurrency: {
+      enabled: true,
+      maxConcurrent: 1,
+      maxConcurrentPerProvider: 1,
+      maxQueueSize: 4,
+      queueTimeoutMs: 5000,
+    },
+  })
+
+  const response = await fetch(`${proxyUrl}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'hello from anthropic base url' }],
+    }),
+  })
+
+  assert.equal(response.status, 200)
+  await response.json()
+  assert.equal(upstreamState.requests.length, 1)
+  assert.equal(upstreamState.requests[0].url, '/apps/anthropic/v1/messages')
+  assert.equal(upstreamState.requests[0].body.model, 'claude-opus-4-7')
+})
+
+test('claude code upstream URL resolver matches Anthropic base URL conventions', () => {
+  assert.equal(
+    resolveUpstreamUrl('https://coding.dashscope.aliyuncs.com/apps/anthropic', 'claude-code'),
+    'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages',
+  )
+  assert.equal(
+    resolveUpstreamUrl('https://coding.dashscope.aliyuncs.com/v1', 'claude-code'),
+    'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages',
+  )
+  assert.equal(
+    resolveUpstreamUrl('https://coding-intl.dashscope.aliyuncs.com/v1/', 'claude-code'),
+    'https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1/messages',
+  )
+  assert.equal(
+    resolveUpstreamUrl('https://llmapi.pro/v1/messages/', 'claude-code'),
+    'https://llmapi.pro/v1/messages',
+  )
+  assert.equal(
+    resolveUpstreamUrl('https://llmapi.pro/v1/chat/completions', 'openai'),
+    'https://llmapi.pro/v1/chat/completions',
+  )
+})
+
 function configureProxy(
   providerName: string,
   model: string,
@@ -889,7 +1071,8 @@ function requestRecord(input: {
 }
 
 async function handleUpstreamRequest(req: IncomingMessage, res: ServerResponse) {
-  if (req.method !== 'POST' || (req.url !== '/v1/chat/completions' && req.url !== '/v1/messages')) {
+  const messagePaths = new Set(['/v1/messages', '/apps/anthropic/v1/messages'])
+  if (req.method !== 'POST' || (req.url !== '/v1/chat/completions' && !messagePaths.has(req.url ?? ''))) {
     res.statusCode = 404
     res.end()
     return
@@ -902,7 +1085,7 @@ async function handleUpstreamRequest(req: IncomingMessage, res: ServerResponse) 
     body,
   })
 
-  if (req.url === '/v1/messages') {
+  if (messagePaths.has(req.url ?? '')) {
     if (hasMessageContent(body, 'slow raw body')) {
       writeDelayedClaudeMessage(res, String(body.model ?? 'model'))
       return

@@ -808,7 +808,7 @@ function readErrorApiKey(error: unknown) {
   return typeof apiKey === 'string' ? apiKey : ''
 }
 
-function resolveUpstreamUrl(apiBaseUrl: string, format: UpstreamPayloadFormat = 'openai') {
+export function resolveUpstreamUrl(apiBaseUrl: string, format: UpstreamPayloadFormat = 'openai') {
   if (format !== 'claude-code') {
     return apiBaseUrl
   }
@@ -816,12 +816,12 @@ function resolveUpstreamUrl(apiBaseUrl: string, format: UpstreamPayloadFormat = 
   try {
     const url = new URL(apiBaseUrl)
     const pathname = url.pathname.replace(/\/+$/, '')
-    if (pathname === '' || pathname === '/') {
-      url.pathname = '/v1/messages'
+    if (isDashScopeOpenAiBase(url, pathname)) {
+      url.pathname = '/apps/anthropic/v1/messages'
       return url.toString()
     }
 
-    if (pathname === '/v1') {
+    if (pathname === '' || pathname === '/') {
       url.pathname = '/v1/messages'
       return url.toString()
     }
@@ -831,10 +831,22 @@ function resolveUpstreamUrl(apiBaseUrl: string, format: UpstreamPayloadFormat = 
       return url.toString()
     }
 
+    if (pathname.endsWith('/v1')) {
+      url.pathname = `${pathname}/messages`
+      return url.toString()
+    }
+
+    url.pathname = `${pathname}/v1/messages`
     return url.toString()
   } catch {
     return apiBaseUrl
   }
+}
+
+function isDashScopeOpenAiBase(url: URL, pathname: string) {
+  const hostname = url.hostname.toLowerCase()
+  const isDashScope = hostname === 'dashscope.aliyuncs.com' || hostname.endsWith('.dashscope.aliyuncs.com')
+  return isDashScope && (pathname === '/v1' || pathname === '/compatible-mode/v1')
 }
 
 function waitForRequestDelay(delayMs: number, signal?: AbortSignal) {
@@ -918,10 +930,11 @@ function isAuthorized(req: Request, config: AppConfig) {
 }
 
 function shouldForwardClaudeCode(decision: RouteDecision) {
-  return Boolean(
-    decision.provider.claude_code_forward ||
-      decision.provider.model_formats?.[decision.targetModel] === 'claude-code',
-  )
+  if (decision.provider.api_protocol === 'openai-chat') {
+    return false
+  }
+
+  return decision.provider.api_protocol === 'anthropic-messages' || decision.provider.claude_code_forward === true
 }
 
 function readClaudeCodeForwardHeaders(req: Request) {

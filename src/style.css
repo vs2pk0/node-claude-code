@@ -581,7 +581,7 @@ pre,
 
 .model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.7fr) 150px 34px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.7fr) 34px;
   gap: 8px;
   align-items: center;
   min-width: 0;

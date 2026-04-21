@@ -4,7 +4,7 @@ import type { TableColumnsType } from 'ant-design-vue'
 import { CopyOutlined, DeleteOutlined, HolderOutlined, ImportOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { useAppState } from '@/composables/useAppState'
-import type { ModelFormatMode, ProviderConfig, RouterStrategy } from '@/types'
+import type { ApiProtocol, ProviderConfig, RouterStrategy } from '@/types'
 import { readError } from '@/utils/format'
 import { createTablePagination } from '@/utils/pagination'
 
@@ -24,6 +24,7 @@ const {
   removeProvider,
   providerStatus,
   providerApiKeyRowCount,
+  providerApiProtocol,
   modelConflictWarningsEnabled,
   modelAliasConflictsForProvider,
   findModelAliasConflict,
@@ -45,9 +46,9 @@ interface ProviderRow {
 
 const providerKeys = new WeakMap<ProviderConfig, string>()
 let providerKeySeed = 0
-const modelFormatOptions: Array<{ label: string; value: ModelFormatMode }> = [
-  { label: '默认格式', value: 'default' },
-  { label: 'Claude Code 直转', value: 'claude-code' },
+const apiProtocolOptions: Array<{ label: string; value: ApiProtocol }> = [
+  { label: 'OpenAI Chat Completions', value: 'openai-chat' },
+  { label: 'Anthropic Messages', value: 'anthropic-messages' },
 ]
 const keyStrategyOptions: Array<{ label: string; value: RouterStrategy }> = [
   { label: '按顺序', value: 'sequence' },
@@ -77,6 +78,11 @@ const providerColumns: TableColumnsType<ProviderRow> = [
     key: 'apiBaseUrl',
     width: 420,
     ellipsis: true,
+  },
+  {
+    title: '接口协议',
+    key: 'apiProtocol',
+    width: 160,
   },
   {
     title: 'Models',
@@ -323,7 +329,7 @@ function providerStableKey(provider: ProviderConfig) {
       :data-source="providerRows"
       :pagination="providerPagination"
       :row-key="providerRowKey"
-      :scroll="{ x: 1000 }"
+      :scroll="{ x: 1220 }"
       :custom-row="providerCustomRow"
     >
       <template #bodyCell="{ column, record }">
@@ -345,6 +351,11 @@ function providerStableKey(provider: ProviderConfig) {
         <template v-else-if="column.key === 'apiBaseUrl'">
           <span class="provider-url-cell">{{ record.provider.api_base_url || '-' }}</span>
         </template>
+        <template v-else-if="column.key === 'apiProtocol'">
+          <a-tag :color="providerApiProtocol(record.provider) === 'anthropic-messages' ? 'blue' : 'green'">
+            {{ providerApiProtocol(record.provider) === 'anthropic-messages' ? 'Anthropic' : 'OpenAI' }}
+          </a-tag>
+        </template>
         <template v-else-if="column.key === 'models'">
           {{ providerModelCount(record) }}
         </template>
@@ -353,7 +364,7 @@ function providerStableKey(provider: ProviderConfig) {
             <a-tag :color="providerStatus(record.provider) === '就绪' ? 'success' : 'warning'">
               {{ providerStatus(record.provider) }}
             </a-tag>
-            <a-tag v-if="record.provider.claude_code_forward" color="blue">直转</a-tag>
+            <a-tag v-if="providerApiProtocol(record.provider) === 'anthropic-messages'" color="blue">直转</a-tag>
             <a-tag v-if="providerHasAliasConflict(record.index)" color="orange">模型冲突</a-tag>
           </a-space>
         </template>
@@ -380,6 +391,9 @@ function providerStableKey(provider: ProviderConfig) {
               </a-form-item>
               <a-form-item label="API Base URL">
                 <a-input v-model:value="record.provider.api_base_url" />
+              </a-form-item>
+              <a-form-item label="接口协议">
+                <a-select v-model:value="record.provider.api_protocol" :options="apiProtocolOptions" />
               </a-form-item>
               <a-form-item label="API Key" class="provider-keys-form-item">
                 <div class="provider-key-list">
@@ -443,9 +457,6 @@ function providerStableKey(provider: ProviderConfig) {
                   </div>
                 </div>
               </a-form-item>
-              <a-form-item label="转发 Claude Code">
-                <a-switch v-model:checked="record.provider.claude_code_forward" />
-              </a-form-item>
               <a-form-item v-if="providerEditors[record.index]" label="Models" class="models-form-item">
                 <div class="model-row-list">
                   <a-alert
@@ -465,11 +476,6 @@ function providerStableKey(provider: ProviderConfig) {
                       v-model:value="modelRow.alias"
                       placeholder="模型别名（可不填）"
                       :status="modelAliasInputStatus(record.index, modelIndex)"
-                    />
-                    <a-select
-                      v-model:value="modelRow.format"
-                      :options="modelFormatOptions"
-                      placeholder="格式处理"
                     />
                     <a-button
                       class="row-delete-button"
