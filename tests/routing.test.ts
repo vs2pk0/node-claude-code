@@ -143,6 +143,21 @@ test('models endpoint includes editable Claude Code route model ids', () => {
   assert.ok(allModels(config).some((model) => model.id === 'route-visible-model' && model.owned_by === 'router'))
 })
 
+test('models endpoint exposes provider aliases and resolves them to real models', () => {
+  const config = parseConfig({
+    ...defaultConfig,
+    Providers: [provider('p1', ['real-provider-model'], { 'real-provider-model': 'friendly-model-id' })],
+  })
+
+  const modelIds = allModels(config).map((model) => model.id)
+  assert.ok(modelIds.includes('friendly-model-id'))
+  assert.equal(modelIds.includes('real-provider-model'), false)
+
+  const decision = resolveRoute(config, body('friendly-model-id'))
+  assert.equal(decision.providerName, 'p1')
+  assert.equal(decision.targetModel, 'real-provider-model')
+})
+
 function provider(name: string, models: string[], modelAliases?: Record<string, string>) {
   return {
     name,

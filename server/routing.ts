@@ -4,6 +4,7 @@ import type { AppConfig, ProviderConfig, RouteDecision, RouterConfig, RouterRule
 
 type RouterRouteKey = 'default' | 'background' | 'think' | 'longContext' | 'image'
 type RouteTarget = { provider: string; model: string }
+type ProviderModelTarget = { provider: ProviderConfig; model: string }
 
 const routeKeys: RouterRouteKey[] = ['default', 'background', 'think', 'longContext', 'image']
 const routeCursorByKey = new Map<string, number>()
@@ -34,9 +35,9 @@ export function resolveRoute(config: AppConfig, body: Record<string, unknown>): 
   const providerByModel = findProviderByModel(config.Providers, requestedModel)
   if (providerByModel) {
     return {
-      provider: providerByModel,
-      providerName: providerByModel.name,
-      targetModel: requestedModel,
+      provider: providerByModel.provider,
+      providerName: providerByModel.provider.name,
+      targetModel: providerByModel.model,
       routeKey: 'model',
       delayMs: 0,
     }
@@ -58,7 +59,7 @@ export function allModels(config: AppConfig) {
 
   const providerModels = config.Providers.flatMap((provider) =>
     provider.models.map((model) => ({
-      id: model,
+      id: publicProviderModelId(provider, model),
       object: 'model',
       owned_by: provider.name,
     })),
@@ -219,11 +220,34 @@ function resolveTarget(
   }
 }
 
-function findProviderByModel(providers: ProviderConfig[], model: string): ProviderConfig | undefined {
+function findProviderByModel(providers: ProviderConfig[], model: string): ProviderModelTarget | undefined {
   if (!model) {
     return undefined
   }
-  return providers.find((provider) => provider.models.includes(model))
+
+  for (const provider of providers) {
+    if (provider.models.includes(model)) {
+      return {
+        provider,
+        model,
+      }
+    }
+
+    const aliasedModel = provider.models.find((item) => publicProviderModelId(provider, item) === model)
+    if (aliasedModel) {
+      return {
+        provider,
+        model: aliasedModel,
+      }
+    }
+  }
+
+  return undefined
+}
+
+function publicProviderModelId(provider: ProviderConfig, model: string) {
+  const alias = provider.model_aliases?.[model]
+  return typeof alias === 'string' && alias.trim() ? alias.trim() : model
 }
 
 function parseTarget(value: string) {
