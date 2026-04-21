@@ -15,6 +15,7 @@ export interface RouterRuleConfig {
   model: string
   targets: string[]
   strategy: RouterStrategy
+  delayMs: number
   [key: string]: unknown
 }
 
@@ -67,6 +68,7 @@ export interface RouteDecision {
   providerName: string
   targetModel: string
   routeKey: string
+  delayMs: number
 }
 
 export interface RequestRecordInput {

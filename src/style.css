@@ -331,34 +331,72 @@ pre,
   font-size: 14px;
 }
 
-.route-rule-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(280px, 1fr));
-  gap: 10px 18px;
+.route-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
   min-width: 0;
 }
 
-.route-rule-item,
-.route-target-row {
+.route-rule-row,
+.route-threshold-row {
+  display: grid;
+  grid-template-columns: 120px minmax(260px, 0.75fr) minmax(420px, 1.25fr);
+  gap: 14px;
+  align-items: start;
+  padding: 12px 0;
+  border-bottom: 1px solid #edf2f4;
+  min-width: 0;
+}
+
+.route-threshold-row {
+  grid-template-columns: 120px minmax(260px, 0.75fr) minmax(420px, 1.25fr);
+  border-bottom: 0;
+}
+
+.route-rule-name {
+  padding-top: 30px;
+  color: #26343a;
+  font-weight: 600;
+}
+
+.route-model-field,
+.route-target-field,
+.route-threshold-field {
+  margin-bottom: 0;
   min-width: 0;
 }
 
 .route-target-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 132px;
+  grid-template-columns: minmax(0, 1fr) 150px;
   gap: 8px;
+  min-width: 0;
+}
+
+.route-target-row.has-strategy {
+  grid-template-columns: minmax(0, 1fr) 132px 150px;
 }
 
 .route-target-row .ant-select {
   width: 100%;
 }
 
-.route-target-row > .ant-select:first-child:last-child {
-  grid-column: 1 / -1;
-}
-
 .route-strategy-select {
   width: 132px;
+}
+
+.route-delay-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  color: #6d7c84;
+  min-width: 0;
+}
+
+.route-delay-input {
+  width: 78px;
 }
 
 .full-input {
@@ -520,16 +558,39 @@ pre,
   .stats-grid,
   .data-grid,
   .form-grid,
-  .route-rule-grid,
   .env-strip {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .route-rule-row,
+  .route-threshold-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 14px 0;
+  }
+
+  .route-rule-name {
+    padding-top: 0;
   }
 
   .route-target-row {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .route-target-row.has-strategy {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .route-strategy-select {
+    width: 100%;
+  }
+
+  .route-delay-control {
+    width: 100%;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .route-delay-input {
     width: 100%;
   }
 }

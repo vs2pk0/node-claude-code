@@ -144,6 +144,40 @@ test('streaming upstream request is aborted when the client disconnects mid-stre
   }, 'client disconnect should be recorded as 499')
 })
 
+test('route request delay waits before sending to upstream', async () => {
+  resetUpstreamState()
+  configureProxy(
+    'delayed-provider',
+    'delayed-model',
+    {
+      maxQueueSize: 4,
+      queueTimeoutMs: 5000,
+    },
+    180,
+  )
+
+  const startedAt = Date.now()
+  const responsePromise = postChat({
+    model: 'delayed-model',
+    messages: [{ role: 'user', content: 'delay before upstream' }],
+  })
+
+  await sleep(80)
+  assert.equal(upstreamState.requests.length, 0)
+  await waitFor(() => upstreamState.pendingResponses.length === 1, 'delayed request should reach upstream')
+  assert.ok(Date.now() - startedAt >= 150)
+
+  writeJson(upstreamState.pendingResponses.shift()!, {
+    id: 'chatcmpl-delayed',
+    choices: [{ message: { role: 'assistant', content: 'delayed ok' } }],
+    usage: { prompt_tokens: 2, completion_tokens: 1 },
+  })
+
+  const response = await responsePromise
+  assert.equal(response.status, 200)
+  await response.json()
+})
+
 test('failed request tokens can be excluded from summary aggregates', () => {
   const current = storage.getConfig()
   storage.deleteAllRequests()
@@ -184,6 +218,7 @@ function configureProxy(
   providerName: string,
   model: string,
   concurrency: Partial<{ maxQueueSize: number; queueTimeoutMs: number }> = {},
+  delayMs = 0,
 ) {
   const current = storage.getConfig()
   storage.deleteAllRequests()
@@ -204,6 +239,7 @@ function configureProxy(
         model: 'claude-sonnet-4-6',
         targets: [`${providerName},${model}`],
         strategy: 'sequence',
+        delayMs,
       },
       background: {
         ...current.Router.background,

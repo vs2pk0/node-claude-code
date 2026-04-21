@@ -50,11 +50,13 @@ function routerRuleSchema(defaultModel: string) {
         model: z.string().trim().default(defaultModel),
         targets: z.array(z.string().trim().min(1)).default([]),
         strategy: routeStrategySchema.default('sequence'),
+        delayMs: z.coerce.number().int().nonnegative().default(0),
       })
       .passthrough())
     .transform((rule) => ({
       ...rule,
       model: rule.model || defaultModel,
+      delayMs: Math.max(0, rule.delayMs),
     }))
 }
 

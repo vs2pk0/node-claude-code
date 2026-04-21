@@ -70,21 +70,25 @@ export const defaultConfig: AppConfig = {
       model: 'claude-sonnet-4-6',
       targets: ['qclaw,claude-opus-4-20250514'],
       strategy: 'sequence',
+      delayMs: 0,
     },
     background: {
       model: 'claude-haiku-4-5-20251001',
       targets: ['qclaw,modelroute'],
       strategy: 'sequence',
+      delayMs: 0,
     },
     think: {
       model: 'claude-opus-4-7',
       targets: ['qclaw,modelroute'],
       strategy: 'sequence',
+      delayMs: 0,
     },
     longContext: {
       model: 'claude-sonnet-4-6',
       targets: ['qclaw,modelroute'],
       strategy: 'sequence',
+      delayMs: 0,
     },
     longContextThreshold: 60000,
     webSearch: '',
@@ -92,6 +96,7 @@ export const defaultConfig: AppConfig = {
       model: 'claude-sonnet-4-6',
       targets: ['qclaw,modelroute'],
       strategy: 'sequence',
+      delayMs: 0,
     },
   },
   Concurrency: {

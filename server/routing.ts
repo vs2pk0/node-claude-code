@@ -38,6 +38,7 @@ export function resolveRoute(config: AppConfig, body: Record<string, unknown>): 
       providerName: providerByModel.name,
       targetModel: requestedModel,
       routeKey: 'model',
+      delayMs: 0,
     }
   }
 
@@ -127,7 +128,7 @@ function resolveRouterRule(config: AppConfig, routeKey: RouterRouteKey): RouteDe
   }
 
   const target = selectTarget(routeKey, rule, targets)
-  return resolveTarget(config, target.provider, target.model, routeKey)
+  return resolveTarget(config, target.provider, target.model, routeKey, rule.delayMs)
 }
 
 function findRouteKeyByTargetModel(config: AppConfig, model: string): RouterRouteKey | undefined {
@@ -193,7 +194,13 @@ function hasRouterTargets(rule: RouterRuleConfig) {
   return rule.targets.some((target) => Boolean(parseTarget(target)))
 }
 
-function resolveTarget(config: AppConfig, providerName: string, model: string, routeKey: string): RouteDecision {
+function resolveTarget(
+  config: AppConfig,
+  providerName: string,
+  model: string,
+  routeKey: string,
+  delayMs = 0,
+): RouteDecision {
   const provider = config.Providers.find((item) => item.name === providerName)
   if (!provider) {
     throw httpError(400, `Provider "${providerName}" was not found`)
@@ -208,6 +215,7 @@ function resolveTarget(config: AppConfig, providerName: string, model: string, r
     providerName,
     targetModel: model,
     routeKey,
+    delayMs,
   }
 }
 

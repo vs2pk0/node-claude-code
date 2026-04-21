@@ -18,6 +18,7 @@ test('legacy router target strings are normalized to editable route rules', () =
   assert.equal(config.Router.default.model, 'claude-sonnet-4-6')
   assert.deepEqual(config.Router.default.targets, ['p1,m1'])
   assert.equal(config.Router.default.strategy, 'sequence')
+  assert.equal(config.Router.default.delayMs, 0)
 })
 
 test('sequence strategy rotates selected route targets in order', () => {
@@ -30,11 +31,14 @@ test('sequence strategy rotates selected route targets in order', () => {
         model: 'route-sequence-model',
         targets: ['p1,m1', 'p2,m2'],
         strategy: 'sequence',
+        delayMs: 250,
       },
     },
   })
 
-  assert.equal(resolveRoute(config, body('route-sequence-model')).providerName, 'p1')
+  const first = resolveRoute(config, body('route-sequence-model'))
+  assert.equal(first.providerName, 'p1')
+  assert.equal(first.delayMs, 250)
   assert.equal(resolveRoute(config, body('route-sequence-model')).providerName, 'p2')
   assert.equal(resolveRoute(config, body('route-sequence-model')).providerName, 'p1')
 })

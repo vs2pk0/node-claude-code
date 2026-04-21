@@ -13,6 +13,25 @@ const strategyOptions = [
   { label: '负载平衡', value: 'loadBalance' },
   { label: '随机调用', value: 'random' },
 ]
+const routeRuleMeta = [
+  { key: 'default', label: 'Default' },
+  { key: 'background', label: 'Background' },
+  { key: 'think', label: 'Think' },
+  { key: 'longContext', label: 'Long Context' },
+  { key: 'image', label: 'Image' },
+] as const
+
+const routeRuleItems = computed(() => {
+  const config = draft.value
+  if (!config) {
+    return []
+  }
+
+  return routeRuleMeta.map((item) => ({
+    ...item,
+    rule: config.Router[item.key],
+  }))
+})
 
 const claudeCodeConfig = computed(() => {
   const config = draft.value
@@ -159,125 +178,51 @@ function randomBase64Url(byteLength: number) {
         </span>
       </template>
       <a-form layout="vertical">
-        <div class="route-rule-grid">
-          <div class="route-rule-item">
-            <a-form-item label="Default 模型 ID">
-              <a-input v-model:value="draft.Router.default.model" />
+        <div class="route-rule-list">
+          <div v-for="item in routeRuleItems" :key="item.key" class="route-rule-row">
+            <div class="route-rule-name">{{ item.label }}</div>
+            <a-form-item label="模型 ID" class="route-model-field">
+              <a-input v-model:value="item.rule.model" />
             </a-form-item>
-            <a-form-item label="Default">
-              <div class="route-target-row">
+            <a-form-item label="目标、策略与延迟" class="route-target-field">
+              <div class="route-target-row" :class="{ 'has-strategy': hasMultipleTargets(item.rule) }">
                 <a-select
-                  v-model:value="draft.Router.default.targets"
+                  v-model:value="item.rule.targets"
                   mode="multiple"
                   show-search
                   allow-clear
                   :options="routeOptions"
                 />
                 <a-select
-                  v-if="hasMultipleTargets(draft.Router.default)"
-                  v-model:value="draft.Router.default.strategy"
+                  v-if="hasMultipleTargets(item.rule)"
+                  v-model:value="item.rule.strategy"
                   class="route-strategy-select"
                   :options="strategyOptions"
                 />
+                <div class="route-delay-control">
+                  <span>延迟</span>
+                  <a-input-number
+                    v-model:value="item.rule.delayMs"
+                    :min="0"
+                    :step="100"
+                    class="route-delay-input"
+                  />
+                  <span>ms</span>
+                </div>
               </div>
             </a-form-item>
           </div>
-          <div class="route-rule-item">
-            <a-form-item label="Background 模型 ID">
-              <a-input v-model:value="draft.Router.background.model" />
-            </a-form-item>
-            <a-form-item label="Background">
-              <div class="route-target-row">
-                <a-select
-                  v-model:value="draft.Router.background.targets"
-                  mode="multiple"
-                  show-search
-                  allow-clear
-                  :options="routeOptions"
-                />
-                <a-select
-                  v-if="hasMultipleTargets(draft.Router.background)"
-                  v-model:value="draft.Router.background.strategy"
-                  class="route-strategy-select"
-                  :options="strategyOptions"
-                />
-              </div>
+          <div class="route-threshold-row">
+            <div class="route-rule-name">Long Context</div>
+            <a-form-item label="触发阈值" class="route-threshold-field">
+              <a-input-number
+                v-model:value="draft.Router.longContextThreshold"
+                :min="0"
+                :step="1000"
+                class="full-input"
+              />
             </a-form-item>
           </div>
-          <div class="route-rule-item">
-            <a-form-item label="Think 模型 ID">
-              <a-input v-model:value="draft.Router.think.model" />
-            </a-form-item>
-            <a-form-item label="Think">
-              <div class="route-target-row">
-                <a-select
-                  v-model:value="draft.Router.think.targets"
-                  mode="multiple"
-                  show-search
-                  allow-clear
-                  :options="routeOptions"
-                />
-                <a-select
-                  v-if="hasMultipleTargets(draft.Router.think)"
-                  v-model:value="draft.Router.think.strategy"
-                  class="route-strategy-select"
-                  :options="strategyOptions"
-                />
-              </div>
-            </a-form-item>
-          </div>
-          <div class="route-rule-item">
-            <a-form-item label="Long Context 模型 ID">
-              <a-input v-model:value="draft.Router.longContext.model" />
-            </a-form-item>
-            <a-form-item label="Long Context">
-              <div class="route-target-row">
-                <a-select
-                  v-model:value="draft.Router.longContext.targets"
-                  mode="multiple"
-                  show-search
-                  allow-clear
-                  :options="routeOptions"
-                />
-                <a-select
-                  v-if="hasMultipleTargets(draft.Router.longContext)"
-                  v-model:value="draft.Router.longContext.strategy"
-                  class="route-strategy-select"
-                  :options="strategyOptions"
-                />
-              </div>
-            </a-form-item>
-          </div>
-          <div class="route-rule-item">
-            <a-form-item label="Image 模型 ID">
-              <a-input v-model:value="draft.Router.image.model" />
-            </a-form-item>
-            <a-form-item label="Image">
-              <div class="route-target-row">
-                <a-select
-                  v-model:value="draft.Router.image.targets"
-                  mode="multiple"
-                  show-search
-                  allow-clear
-                  :options="routeOptions"
-                />
-                <a-select
-                  v-if="hasMultipleTargets(draft.Router.image)"
-                  v-model:value="draft.Router.image.strategy"
-                  class="route-strategy-select"
-                  :options="strategyOptions"
-                />
-              </div>
-            </a-form-item>
-          </div>
-          <a-form-item label="Threshold">
-            <a-input-number
-              v-model:value="draft.Router.longContextThreshold"
-              :min="0"
-              :step="1000"
-              class="full-input"
-            />
-          </a-form-item>
         </div>
       </a-form>
     </a-card>

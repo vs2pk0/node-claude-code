@@ -15,6 +15,7 @@ export interface RouterRuleConfig {
   model: string
   targets: string[]
   strategy: RouterStrategy
+  delayMs: number
   [key: string]: unknown
 }
 

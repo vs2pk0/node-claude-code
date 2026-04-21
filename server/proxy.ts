@@ -185,6 +185,7 @@ async function streamOpenAi(
 
   try {
     release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
+    await waitForRequestDelay(decision.delayMs, signal)
     const upstreamRequest = await postJson(config, decision, payload, signal)
     const upstream = upstreamRequest.upstream
     upstreamCleanup = upstreamRequest.cleanup
@@ -248,6 +249,7 @@ async function streamAnthropicFromOpenAi(
 
   try {
     release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
+    await waitForRequestDelay(decision.delayMs, signal)
     const upstreamRequest = await postJson(config, decision, payload, signal)
     const upstream = upstreamRequest.upstream
     upstreamCleanup = upstreamRequest.cleanup
@@ -405,6 +407,7 @@ async function postJsonWithConcurrency(
 ) {
   const release = await requestConcurrencyLimiter.acquire(config, decision, { signal })
   try {
+    await waitForRequestDelay(decision.delayMs, signal)
     const upstreamRequest = await postJson(config, decision, payload, signal)
     try {
       const data = (await upstreamRequest.upstream.json()) as JsonRecord
@@ -450,6 +453,33 @@ async function postJson(config: AppConfig, decision: RouteDecision, payload: Jso
     }
     throw error
   }
+}
+
+function waitForRequestDelay(delayMs: number, signal?: AbortSignal) {
+  if (delayMs <= 0) {
+    return Promise.resolve()
+  }
+
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason ?? clientClosedError())
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, delayMs)
+    const abort = () => {
+      cleanup()
+      reject(signal?.reason ?? clientClosedError())
+    }
+    const cleanup = () => {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+    }
+
+    signal?.addEventListener('abort', abort, { once: true })
+  })
 }
 
 function createUpstreamAbort(config: AppConfig, signal?: AbortSignal) {
