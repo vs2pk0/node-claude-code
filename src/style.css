@@ -442,6 +442,34 @@ pre,
   vertical-align: middle;
 }
 
+.provider-drag-handle {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 6px;
+  color: #7d8a91;
+  cursor: grab;
+}
+
+.provider-drag-handle:hover,
+.provider-drag-handle:focus-visible {
+  background: #eef3f4;
+  color: #2f6f6d;
+}
+
+.provider-drag-handle:active {
+  cursor: grabbing;
+}
+
+.provider-row-dragging > td {
+  opacity: 0.58;
+}
+
+.provider-row-drag-over > td {
+  background: #eef7f5 !important;
+}
+
 .provider-name-cell {
   font-weight: 600;
 }
@@ -481,10 +509,39 @@ pre,
 
 .provider-key-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(180px, 0.8fr) 58px 34px;
+  grid-template-columns: 28px minmax(0, 1.2fr) minmax(180px, 0.8fr) 58px 34px;
   gap: 8px;
   align-items: center;
   min-width: 0;
+}
+
+.provider-key-drag-handle {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 6px;
+  color: #7d8a91;
+  cursor: grab;
+}
+
+.provider-key-drag-handle:hover,
+.provider-key-drag-handle:focus-visible {
+  background: #eef3f4;
+  color: #2f6f6d;
+}
+
+.provider-key-drag-handle:active {
+  cursor: grabbing;
+}
+
+.provider-key-row.is-dragging {
+  opacity: 0.6;
+}
+
+.provider-key-row.is-drag-over {
+  border-radius: 6px;
+  background: #eef7f5;
 }
 
 .provider-key-row.is-disabled .ant-input,

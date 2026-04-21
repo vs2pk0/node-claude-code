@@ -215,7 +215,98 @@ test('failed request tokens can be excluded from summary aggregates', () => {
   assert.equal(filtered.totals.totalTokens, 12)
   assert.equal(filtered.byProvider[0].inputTokens, 10)
   assert.equal(filtered.byModel[0].inputTokens, 10)
+  assert.equal(filtered.byProviderModelKey[0].inputTokens, 10)
   assert.ok(filtered.recent.some((record: { success: boolean; inputTokens: number }) => !record.success && record.inputTokens === 100))
+})
+
+test('summary groups provider model key statistics independently', () => {
+  const current = storage.getConfig()
+  storage.deleteAllRequests()
+  storage.saveConfig({
+    ...current,
+    Stats: {
+      ...current.Stats,
+      excludeFailedTokens: false,
+    },
+  })
+
+  storage.recordRequest(
+    requestRecord({
+      success: true,
+      inputTokens: 10,
+      outputTokens: 2,
+      status: 200,
+      provider: 'provider-a',
+      apiKey: 'Key A',
+      model: 'mapped-model',
+      targetModel: 'target-model',
+    }),
+  )
+  storage.recordRequest(
+    requestRecord({
+      success: true,
+      inputTokens: 3,
+      outputTokens: 4,
+      status: 200,
+      provider: 'provider-a',
+      apiKey: 'Key A',
+      model: 'mapped-model',
+      targetModel: 'target-model',
+    }),
+  )
+  storage.recordRequest(
+    requestRecord({
+      success: true,
+      inputTokens: 5,
+      outputTokens: 6,
+      status: 200,
+      provider: 'provider-a',
+      apiKey: 'Key B',
+      model: 'mapped-model',
+      targetModel: 'target-model',
+    }),
+  )
+
+  const rows = storage
+    .getSummary()
+    .byProviderModelKey.filter(
+      (record: { provider: string; model: string; targetModel: string }) =>
+        record.provider === 'provider-a' && record.model === 'mapped-model' && record.targetModel === 'target-model',
+    )
+
+  assert.deepEqual(
+    rows.map(
+      (record: {
+        apiKey: string
+        requests: number
+        inputTokens: number
+        outputTokens: number
+        totalTokens: number
+      }) => ({
+        apiKey: record.apiKey,
+        requests: record.requests,
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+        totalTokens: record.totalTokens,
+      }),
+    ),
+    [
+      {
+        apiKey: 'Key A',
+        requests: 2,
+        inputTokens: 13,
+        outputTokens: 6,
+        totalTokens: 19,
+      },
+      {
+        apiKey: 'Key B',
+        requests: 1,
+        inputTokens: 5,
+        outputTokens: 6,
+        totalTokens: 11,
+      },
+    ],
+  )
 })
 
 test('claude code forward sends Anthropic payload and returns upstream response unchanged', async () => {
@@ -772,12 +863,22 @@ function configureProxy(
   })
 }
 
-function requestRecord(input: { success: boolean; inputTokens: number; outputTokens: number; status: number }) {
+function requestRecord(input: {
+  success: boolean
+  inputTokens: number
+  outputTokens: number
+  status: number
+  provider?: string
+  apiKey?: string
+  model?: string
+  targetModel?: string
+}) {
   return {
     endpoint: '/v1/messages',
-    provider: 'stats-provider',
-    model: 'stats-model',
-    targetModel: 'stats-target-model',
+    provider: input.provider ?? 'stats-provider',
+    apiKey: input.apiKey,
+    model: input.model ?? 'stats-model',
+    targetModel: input.targetModel ?? 'stats-target-model',
     routeKey: 'default',
     status: input.status,
     success: input.success,

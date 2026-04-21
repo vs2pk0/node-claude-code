@@ -354,9 +354,58 @@ function toggleProviderApiKeyDisabled(providerIndex: number, keyIndex: number) {
   provider.api_key = materializeProviderApiKeys(provider).api_key
 }
 
+function moveProviderApiKey(providerIndex: number, fromIndex: number, toIndex: number) {
+  const provider = draft.value?.Providers[providerIndex]
+  if (!provider) {
+    return
+  }
+
+  ensureProviderApiKeyRows(provider)
+  const keys = provider.api_keys!
+  const keyNames = provider.api_key_names!
+  const keyDisabled = provider.api_key_disabled!
+  if (fromIndex < 0 || fromIndex >= keys.length || toIndex < 0 || toIndex > keys.length) {
+    return
+  }
+
+  const insertIndex = Math.max(0, Math.min(keys.length - 1, fromIndex < toIndex ? toIndex - 1 : toIndex))
+  if (insertIndex === fromIndex) {
+    return
+  }
+
+  moveArrayItem(keys, fromIndex, insertIndex)
+  moveArrayItem(keyNames, fromIndex, insertIndex)
+  moveArrayItem(keyDisabled, fromIndex, insertIndex)
+  provider.api_key = materializeProviderApiKeys(provider).api_key
+}
+
 function removeProvider(index: number) {
   draft.value?.Providers.splice(index, 1)
   syncProviderEditors()
+}
+
+function moveProvider(fromIndex: number, toIndex: number) {
+  if (!draft.value) {
+    return
+  }
+
+  const providers = draft.value.Providers
+  if (fromIndex < 0 || fromIndex >= providers.length || toIndex < 0 || toIndex > providers.length) {
+    return
+  }
+
+  const insertIndex = Math.max(0, Math.min(providers.length - 1, fromIndex < toIndex ? toIndex - 1 : toIndex))
+  if (insertIndex === fromIndex) {
+    return
+  }
+
+  const [provider] = providers.splice(fromIndex, 1)
+  providers.splice(insertIndex, 0, provider)
+
+  const [editor] = providerEditors.value.splice(fromIndex, 1)
+  if (editor) {
+    providerEditors.value.splice(insertIndex, 0, editor)
+  }
 }
 
 function providerStatus(provider: ProviderConfig) {
@@ -758,6 +807,11 @@ function normalizeRouterStrategy(strategy: unknown): RouterStrategy {
   return strategy === 'loadBalance' || strategy === 'random' ? strategy : 'sequence'
 }
 
+function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number) {
+  const [item] = items.splice(fromIndex, 1)
+  items.splice(toIndex, 0, item)
+}
+
 function parseCurlProvider(curlText: string) {
   const tokens = tokenizeCurl(curlText)
   if (!tokens.length || tokens[0] !== 'curl') {
@@ -1008,7 +1062,9 @@ export function useAppState() {
     addProviderApiKey,
     removeProviderApiKey,
     toggleProviderApiKeyDisabled,
+    moveProviderApiKey,
     removeProvider,
+    moveProvider,
     providerStatus,
     providerApiKeyRowCount,
     modelAliasConflictsForProvider,

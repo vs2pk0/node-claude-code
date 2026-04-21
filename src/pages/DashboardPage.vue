@@ -10,6 +10,7 @@ import { createTablePagination } from '@/utils/pagination'
 
 const { summary, successRate, loadStats, resolveModelAlias, resolveProviderName } = useAppState()
 const modelPagination = createTablePagination(8)
+const providerStatsPagination = createTablePagination(8)
 const requestPagination = createTablePagination(8)
 
 const requestColumns: TableColumnsType<RequestRecord> = [
@@ -125,8 +126,67 @@ const modelColumns: TableColumnsType<StatsSummary['byModel'][number]> = [
   },
 ]
 
+const providerStatsColumns: TableColumnsType<StatsSummary['byProviderModelKey'][number]> = [
+  {
+    title: 'Provider',
+    dataIndex: 'provider',
+    key: 'provider',
+    width: 130,
+  },
+  {
+    title: 'Key',
+    dataIndex: 'apiKey',
+    key: 'apiKey',
+    width: 170,
+    ellipsis: true,
+    customRender: ({ text }) => String(text || '-'),
+  },
+  {
+    title: '映射模型',
+    dataIndex: 'model',
+    key: 'model',
+    width: 190,
+    ellipsis: true,
+  },
+  {
+    title: '实际模型',
+    dataIndex: 'targetModel',
+    key: 'targetModel',
+    width: 190,
+    ellipsis: true,
+  },
+  {
+    title: '请求',
+    dataIndex: 'requests',
+    width: 90,
+    customRender: ({ text }) => formatNumber(Number(text)),
+  },
+  {
+    title: '输入 Token',
+    dataIndex: 'inputTokens',
+    width: 120,
+    customRender: ({ text }) => formatNumber(Number(text)),
+  },
+  {
+    title: '输出 Token',
+    dataIndex: 'outputTokens',
+    width: 120,
+    customRender: ({ text }) => formatNumber(Number(text)),
+  },
+  {
+    title: '总 Token',
+    dataIndex: 'totalTokens',
+    width: 120,
+    customRender: ({ text }) => formatNumber(Number(text)),
+  },
+]
+
 function modelRowKey(record: StatsSummary['byModel'][number]) {
   return `${record.provider}:${record.model}:${record.targetModel}`
+}
+
+function providerStatsRowKey(record: StatsSummary['byProviderModelKey'][number]) {
+  return `${record.provider}:${record.apiKey}:${record.model}:${record.targetModel}`
 }
 
 function displayMappedModel(providerName: string, model: string) {
@@ -206,6 +266,33 @@ async function removeRequest(record: RequestRecord) {
     </div>
 
     <div class="data-grid">
+      <a-card class="data-card">
+        <template #title>Provider 统计</template>
+        <a-table
+          size="middle"
+          :columns="providerStatsColumns"
+          :data-source="summary?.byProviderModelKey || []"
+          :pagination="providerStatsPagination"
+          :scroll="{ x: 1130 }"
+          :row-key="providerStatsRowKey"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'provider'">
+              <a-tooltip v-if="hasProviderNameAlias(record.provider, record.targetModel)" :title="record.provider">
+                <span>{{ displayProviderName(record.provider, record.targetModel) }}</span>
+              </a-tooltip>
+              <span v-else>{{ record.provider }}</span>
+            </template>
+            <template v-else-if="column.key === 'model'">
+              <span>{{ displayMappedModel(record.provider, record.model) }}</span>
+            </template>
+            <template v-else-if="column.key === 'targetModel'">
+              <span>{{ displayTargetModel(record.provider, record.targetModel) }}</span>
+            </template>
+          </template>
+        </a-table>
+      </a-card>
+
       <a-card class="data-card">
         <template #title>模型统计</template>
         <template #extra>

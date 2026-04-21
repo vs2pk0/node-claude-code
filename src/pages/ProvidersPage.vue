@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { TableColumnsType } from 'ant-design-vue'
-import { CopyOutlined, DeleteOutlined, ImportOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { CopyOutlined, DeleteOutlined, HolderOutlined, ImportOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { useAppState } from '@/composables/useAppState'
 import type { ModelFormatMode, ProviderConfig, RouterStrategy } from '@/types'
@@ -14,11 +14,13 @@ const {
   addProvider,
   importProviderFromCurl,
   copyProvider,
+  moveProvider,
   addProviderModel,
   removeProviderModel,
   addProviderApiKey,
   removeProviderApiKey,
   toggleProviderApiKeyDisabled,
+  moveProviderApiKey,
   removeProvider,
   providerStatus,
   providerApiKeyRowCount,
@@ -29,6 +31,10 @@ const {
 
 const curlImportOpen = ref(false)
 const curlText = ref('')
+const draggedProviderIndex = ref<number>()
+const dragOverProviderIndex = ref<number>()
+const draggedProviderKey = ref<{ providerIndex: number; keyIndex: number }>()
+const dragOverProviderKey = ref<{ providerIndex: number; keyIndex: number }>()
 const providerPagination = createTablePagination(12, ['12', '24', '48', '96'])
 
 interface ProviderRow {
@@ -54,6 +60,12 @@ const providerRows = computed<ProviderRow[]>(() => {
 })
 
 const providerColumns: TableColumnsType<ProviderRow> = [
+  {
+    title: '',
+    key: 'drag',
+    width: 52,
+    fixed: 'left',
+  },
   {
     title: 'Name',
     key: 'name',
@@ -111,6 +123,119 @@ function handleCopyProvider(index: number) {
 
 function providerRowKey(record: ProviderRow) {
   return record.key
+}
+
+function providerCustomRow(record: ProviderRow) {
+  return {
+    class: [
+      draggedProviderIndex.value === record.index ? 'provider-row-dragging' : '',
+      dragOverProviderIndex.value === record.index && draggedProviderIndex.value !== record.index
+        ? 'provider-row-drag-over'
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
+    onDragover: (event: DragEvent) => handleProviderDragOver(event, record),
+    onDrop: (event: DragEvent) => handleProviderDrop(event, record),
+  }
+}
+
+function handleProviderDragStart(event: DragEvent, record: ProviderRow) {
+  draggedProviderIndex.value = record.index
+  dragOverProviderIndex.value = record.index
+  event.dataTransfer?.setData('text/plain', String(record.index))
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function handleProviderDragOver(event: DragEvent, record: ProviderRow) {
+  if (draggedProviderIndex.value === undefined) {
+    return
+  }
+
+  event.preventDefault()
+  dragOverProviderIndex.value = record.index
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move'
+  }
+}
+
+function handleProviderDrop(event: DragEvent, record: ProviderRow) {
+  event.preventDefault()
+  const draggedIndex = draggedProviderIndex.value ?? Number(event.dataTransfer?.getData('text/plain'))
+  if (!Number.isInteger(draggedIndex)) {
+    handleProviderDragEnd()
+    return
+  }
+
+  const rowElement = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
+  const rowRect = rowElement?.getBoundingClientRect()
+  const dropAfter = rowRect ? event.clientY > rowRect.top + rowRect.height / 2 : false
+
+  moveProvider(draggedIndex, record.index + (dropAfter ? 1 : 0))
+  handleProviderDragEnd()
+}
+
+function handleProviderDragEnd() {
+  draggedProviderIndex.value = undefined
+  dragOverProviderIndex.value = undefined
+}
+
+function handleProviderApiKeyDragStart(event: DragEvent, providerIndex: number, keyIndex: number) {
+  event.stopPropagation()
+  draggedProviderKey.value = { providerIndex, keyIndex }
+  dragOverProviderKey.value = { providerIndex, keyIndex }
+  event.dataTransfer?.setData('text/plain', `${providerIndex}:${keyIndex}`)
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function handleProviderApiKeyDragOver(event: DragEvent, providerIndex: number, keyIndex: number) {
+  if (draggedProviderKey.value?.providerIndex !== providerIndex) {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  dragOverProviderKey.value = { providerIndex, keyIndex }
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move'
+  }
+}
+
+function handleProviderApiKeyDrop(event: DragEvent, providerIndex: number, keyIndex: number) {
+  event.preventDefault()
+  event.stopPropagation()
+  if (draggedProviderKey.value?.providerIndex !== providerIndex) {
+    handleProviderApiKeyDragEnd()
+    return
+  }
+
+  const rowElement = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
+  const rowRect = rowElement?.getBoundingClientRect()
+  const dropAfter = rowRect ? event.clientY > rowRect.top + rowRect.height / 2 : false
+
+  moveProviderApiKey(providerIndex, draggedProviderKey.value.keyIndex, keyIndex + (dropAfter ? 1 : 0))
+  handleProviderApiKeyDragEnd()
+}
+
+function handleProviderApiKeyDragEnd() {
+  draggedProviderKey.value = undefined
+  dragOverProviderKey.value = undefined
+}
+
+function isProviderKeyDragging(providerIndex: number, keyIndex: number) {
+  return draggedProviderKey.value?.providerIndex === providerIndex && draggedProviderKey.value.keyIndex === keyIndex
+}
+
+function isProviderKeyDragOver(providerIndex: number, keyIndex: number) {
+  return (
+    dragOverProviderKey.value?.providerIndex === providerIndex
+    && dragOverProviderKey.value.keyIndex === keyIndex
+    && !isProviderKeyDragging(providerIndex, keyIndex)
+  )
 }
 
 function providerModelCount(record: ProviderRow) {
@@ -199,9 +324,22 @@ function providerStableKey(provider: ProviderConfig) {
       :pagination="providerPagination"
       :row-key="providerRowKey"
       :scroll="{ x: 1000 }"
+      :custom-row="providerCustomRow"
     >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'name'">
+        <template v-if="column.key === 'drag'">
+          <a-tooltip title="拖拽调整顺序">
+            <span
+              class="provider-drag-handle"
+              draggable="true"
+              @dragstart="handleProviderDragStart($event, record)"
+              @dragend="handleProviderDragEnd"
+            >
+              <HolderOutlined />
+            </span>
+          </a-tooltip>
+        </template>
+        <template v-else-if="column.key === 'name'">
           <span class="provider-name-cell">{{ record.provider.name || `Provider ${record.index + 1}` }}</span>
         </template>
         <template v-else-if="column.key === 'apiBaseUrl'">
@@ -249,8 +387,24 @@ function providerStableKey(provider: ProviderConfig) {
                     v-for="(_, keyIndex) in record.provider.api_keys"
                     :key="`${record.key}-key-${keyIndex}`"
                     class="provider-key-row"
-                    :class="{ 'is-disabled': record.provider.api_key_disabled[keyIndex] }"
+                    :class="{
+                      'is-disabled': record.provider.api_key_disabled[keyIndex],
+                      'is-dragging': isProviderKeyDragging(record.index, keyIndex),
+                      'is-drag-over': isProviderKeyDragOver(record.index, keyIndex),
+                    }"
+                    @dragover="handleProviderApiKeyDragOver($event, record.index, keyIndex)"
+                    @drop="handleProviderApiKeyDrop($event, record.index, keyIndex)"
                   >
+                    <a-tooltip title="拖拽调整 Key 顺序">
+                      <span
+                        class="provider-key-drag-handle"
+                        draggable="true"
+                        @dragstart="handleProviderApiKeyDragStart($event, record.index, keyIndex)"
+                        @dragend="handleProviderApiKeyDragEnd"
+                      >
+                        <HolderOutlined />
+                      </span>
+                    </a-tooltip>
                     <a-input-password
                       v-model:value="record.provider.api_keys[keyIndex]"
                       autocomplete="new-password"

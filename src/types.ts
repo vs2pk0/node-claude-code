@@ -120,5 +120,15 @@ export interface StatsSummary {
     outputTokens: number
     totalTokens: number
   }>
+  byProviderModelKey: Array<{
+    provider: string
+    apiKey: string
+    model: string
+    targetModel: string
+    requests: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+  }>
   recent: RequestRecord[]
 }

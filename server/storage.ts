@@ -191,6 +191,26 @@ function getSummary(): StatsSummary {
     )
     .all() as StatsSummary['byModel']
 
+  const byProviderModelKey = db
+    .prepare(
+      `
+        SELECT
+          provider,
+          api_key AS apiKey,
+          model,
+          target_model AS targetModel,
+          COUNT(*) AS requests,
+          ${tokenSums.input} AS inputTokens,
+          ${tokenSums.output} AS outputTokens,
+          ${tokenSums.total} AS totalTokens
+        FROM requests
+        GROUP BY provider, api_key, model, target_model
+        ORDER BY requests DESC, totalTokens DESC
+        LIMIT 200
+      `,
+    )
+    .all() as StatsSummary['byProviderModelKey']
+
   return {
     totals: {
       requests: Number(totals.requests ?? 0),
@@ -203,6 +223,7 @@ function getSummary(): StatsSummary {
     },
     byProvider,
     byModel,
+    byProviderModelKey,
     recent: getRecentRequests(200),
   }
 }
