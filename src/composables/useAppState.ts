@@ -2,7 +2,18 @@ import { computed, reactive, ref } from 'vue'
 import type { UploadProps } from 'ant-design-vue'
 import { message } from 'ant-design-vue'
 import { exportConfig, getConfig, getHealth, getStatsSummary, importConfig, saveConfig, type HealthPayload } from '@/api'
-import { isDesktopApp, openDesktopConfigDirectory, restartDesktopService, saveDesktopExportFile } from '@/desktop'
+import {
+  clearDesktopApiBaseUrl,
+  getDesktopServiceStatus,
+  isDesktopApp,
+  openDesktopConfigDirectory,
+  restartDesktopService,
+  saveDesktopBootstrapConfig,
+  saveDesktopExportFile,
+  startDesktopService,
+  stopDesktopService,
+  type DesktopServiceStatus,
+} from '@/desktop'
 import type { ApiProtocol, AppConfig, ProviderConfig, RouterStrategy, StatsSummary } from '@/types'
 import { readError } from '@/utils/format'
 
@@ -33,11 +44,16 @@ const draft = ref<AppConfig>()
 const health = ref<HealthPayload>()
 const summary = ref<StatsSummary>()
 const providerEditors = ref<ProviderEditorState[]>([])
+const desktopService = ref<DesktopServiceStatus | null>(null)
+const startupHost = ref('127.0.0.1')
+const startupPort = ref(4568)
 const loading = reactive({
   config: false,
   stats: false,
   saving: false,
   importing: false,
+  starting: false,
+  stopping: false,
 })
 
 const defaultApiProtocol: ApiProtocol = 'openai-chat'
@@ -60,15 +76,22 @@ const routeOptions = computed(() => {
 
 const modelAliasConflicts = computed(() => readModelAliasConflicts())
 const modelConflictWarningsEnabled = computed(() => draft.value?.UI?.showModelConflictWarnings !== false)
+const serviceRunning = computed(() => desktopService.value?.running ?? !isDesktopApp())
+const serviceReady = computed(() => !isDesktopApp() || serviceRunning.value)
 
 const originUrl = computed(() => {
   const config = draft.value
-  if (!config) {
-    return ''
+  const runtime = health.value?.runtime ?? desktopService.value?.runtime
+  if (runtime) {
+    return `http://${runtime.host}:${runtime.port}`
   }
 
-  const runtime = health.value?.runtime
-  return `http://${runtime?.host || config.HOST}:${runtime?.port || config.PORT}`
+  if (config) {
+    return `http://${config.HOST}:${config.PORT}`
+  }
+
+  const configured = desktopService.value?.configured
+  return configured ? `http://${configured.host}:${configured.port}` : ''
 })
 
 const uiUrl = computed(() => (originUrl.value ? `${originUrl.value}/ui` : ''))
@@ -92,10 +115,12 @@ async function initializeApp() {
 
   initialized = true
   await refreshAll()
-  startStatsPolling()
 }
 
 function startStatsPolling() {
+  if (!serviceReady.value) {
+    return
+  }
   if (statsTimer) {
     return
   }
@@ -111,14 +136,40 @@ function stopStatsPolling() {
 }
 
 async function refreshAll() {
+  await refreshDesktopServiceStatus()
+
+  if (!serviceReady.value) {
+    stopStatsPolling()
+    return
+  }
+
   await Promise.all([loadConfig(), loadStats(), loadHealth()])
+  startStatsPolling()
+}
+
+async function refreshDesktopServiceStatus() {
+  if (!isDesktopApp()) {
+    return
+  }
+
+  try {
+    desktopService.value = await getDesktopServiceStatus()
+    syncStartupConfigFromState()
+  } catch (error) {
+    message.error(readError(error))
+  }
 }
 
 async function loadConfig() {
+  if (!serviceReady.value) {
+    return
+  }
+
   loading.config = true
   try {
     draft.value = await getConfig()
     syncProviderEditors()
+    syncStartupConfigFromState()
   } catch (error) {
     message.error(readError(error))
   } finally {
@@ -127,6 +178,11 @@ async function loadConfig() {
 }
 
 async function loadHealth() {
+  if (!serviceReady.value) {
+    health.value = undefined
+    return
+  }
+
   try {
     health.value = await getHealth()
   } catch (error) {
@@ -135,6 +191,11 @@ async function loadHealth() {
 }
 
 async function loadStats() {
+  if (!serviceReady.value) {
+    summary.value = undefined
+    return
+  }
+
   loading.stats = true
   try {
     summary.value = await getStatsSummary()
@@ -226,15 +287,20 @@ async function openConfigDirectory() {
 
 async function applyRuntimeConfigIfNeeded(previousConfig: AppConfig | undefined, nextConfig: AppConfig, source: 'save' | 'import') {
   const addressChanged = hasServerAddressChange(previousConfig, nextConfig)
+  startupHost.value = nextConfig.HOST
+  startupPort.value = nextConfig.PORT
 
-  if (isDesktopApp() && addressChanged) {
+  if (isDesktopApp() && addressChanged && serviceRunning.value) {
     const nextBaseUrl = await restartDesktopService()
+    await refreshDesktopServiceStatus()
     await Promise.all([loadHealth(), loadStats()])
     message.success(source === 'save' ? `已保存，端口已应用到 ${nextBaseUrl}` : `已导入，端口已应用到 ${nextBaseUrl}`)
     return
   }
 
-  await loadHealth()
+  if (serviceReady.value) {
+    await loadHealth()
+  }
 
   if (addressChanged) {
     message.success(source === 'save' ? '已保存，Host/Port 将在下次重启后生效' : '已导入，Host/Port 将在下次重启后生效')
@@ -242,6 +308,89 @@ async function applyRuntimeConfigIfNeeded(previousConfig: AppConfig | undefined,
   }
 
   message.success(source === 'save' ? '已保存' : '已导入')
+}
+
+async function persistStartupConfig() {
+  const host = startupHost.value.trim()
+  const port = Number(startupPort.value)
+
+  if (!host) {
+    throw new Error('Host 不能为空')
+  }
+
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('Port 必须在 1 到 65535 之间')
+  }
+
+  desktopService.value = await saveDesktopBootstrapConfig(host, port)
+  syncStartupConfigFromState()
+
+  if (draft.value) {
+    draft.value.HOST = host
+    draft.value.PORT = port
+  }
+}
+
+async function startService() {
+  if (!isDesktopApp()) {
+    return
+  }
+
+  loading.starting = true
+  try {
+    await persistStartupConfig()
+    desktopService.value = await startDesktopService()
+    if (draft.value) {
+      await Promise.all([loadStats(), loadHealth()])
+    } else {
+      await Promise.all([loadConfig(), loadStats(), loadHealth()])
+    }
+    startStatsPolling()
+    message.success('本地服务已启动')
+  } catch (error) {
+    message.error(readError(error))
+  } finally {
+    loading.starting = false
+  }
+}
+
+async function stopService() {
+  if (!isDesktopApp()) {
+    return
+  }
+
+  loading.stopping = true
+  try {
+    desktopService.value = await stopDesktopService()
+    clearDesktopApiBaseUrl()
+    stopStatsPolling()
+    health.value = undefined
+    summary.value = undefined
+    if (draft.value) {
+      startupHost.value = draft.value.HOST
+      startupPort.value = draft.value.PORT
+    } else {
+      syncStartupConfigFromState()
+    }
+    message.success('本地服务已停止')
+  } catch (error) {
+    message.error(readError(error))
+  } finally {
+    loading.stopping = false
+  }
+}
+
+async function saveStartupConfig() {
+  if (!isDesktopApp()) {
+    return
+  }
+
+  try {
+    await persistStartupConfig()
+    message.success('启动地址已保存')
+  } catch (error) {
+    message.error(readError(error))
+  }
 }
 
 function addProvider() {
@@ -861,6 +1010,20 @@ function hasServerAddressChange(previousConfig: AppConfig | undefined, nextConfi
   return previousConfig.HOST !== nextConfig.HOST || previousConfig.PORT !== nextConfig.PORT
 }
 
+function syncStartupConfigFromState() {
+  if (draft.value) {
+    startupHost.value = draft.value.HOST
+    startupPort.value = draft.value.PORT
+    return
+  }
+
+  const configured = desktopService.value?.configured
+  if (configured) {
+    startupHost.value = configured.host
+    startupPort.value = configured.port
+  }
+}
+
 function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number) {
   const [item] = items.splice(fromIndex, 1)
   items.splice(toIndex, 0, item)
@@ -1103,10 +1266,15 @@ export function useAppState() {
     health,
     summary,
     providerEditors,
+    desktopService,
+    startupHost,
+    startupPort,
     loading,
     routeOptions,
     modelAliasConflicts,
     modelConflictWarningsEnabled,
+    serviceRunning,
+    serviceReady,
     originUrl,
     uiUrl,
     jsonPreview,
@@ -1119,6 +1287,9 @@ export function useAppState() {
     loadHealth,
     persistConfig,
     downloadSettings,
+    startService,
+    stopService,
+    saveStartupConfig,
     openConfigDirectory,
     beforeImport,
     addProvider,

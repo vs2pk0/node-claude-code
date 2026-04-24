@@ -1,9 +1,22 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
-const fallbackDesktopBaseUrl = 'http://127.0.0.1:4568'
-
 let apiBaseUrl = ''
 let initPromise: Promise<void> | undefined
+
+export interface DesktopServiceStatus {
+  running: boolean
+  configured: {
+    host: string
+    port: number
+  }
+  runtime: {
+    host: string
+    port: number
+  } | null
+  dataDir: string
+  settingsPath: string
+  databasePath: string
+}
 
 export function isDesktopApp() {
   return isTauri()
@@ -28,12 +41,51 @@ export async function initApiBaseUrl() {
     try {
       apiBaseUrl = normalizeBaseUrl(await invoke<string>('service_base_url'))
     } catch (error) {
-      console.warn('[desktop] failed to resolve embedded service URL, fallback to default port', error)
-      apiBaseUrl = fallbackDesktopBaseUrl
+      console.warn('[desktop] embedded service is not running yet', error)
+      apiBaseUrl = ''
     }
   })()
 
   return initPromise
+}
+
+export async function getDesktopServiceStatus() {
+  if (!isTauri()) {
+    return null
+  }
+
+  return invoke<DesktopServiceStatus>('desktop_service_status')
+}
+
+export async function startDesktopService() {
+  if (!isTauri()) {
+    return null
+  }
+
+  const status = await invoke<DesktopServiceStatus>('start_embedded_service')
+  syncBaseUrlFromStatus(status)
+  return status
+}
+
+export async function stopDesktopService() {
+  if (!isTauri()) {
+    return null
+  }
+
+  const status = await invoke<DesktopServiceStatus>('stop_embedded_service_command')
+  syncBaseUrlFromStatus(status)
+  return status
+}
+
+export async function saveDesktopBootstrapConfig(host: string, port: number) {
+  if (!isTauri()) {
+    return null
+  }
+
+  return invoke<DesktopServiceStatus>('save_bootstrap_config', {
+    host,
+    port,
+  })
 }
 
 export async function saveDesktopExportFile(content: string, fileName = 'settings.json') {
@@ -61,9 +113,27 @@ export async function restartDesktopService() {
   }
 
   const nextBaseUrl = normalizeBaseUrl(await invoke<string>('restart_embedded_service'))
-  apiBaseUrl = nextBaseUrl
-  initPromise = Promise.resolve()
+  setDesktopApiBaseUrl(nextBaseUrl)
   return nextBaseUrl
+}
+
+export function setDesktopApiBaseUrl(url: string) {
+  apiBaseUrl = normalizeBaseUrl(url)
+  initPromise = Promise.resolve()
+}
+
+export function clearDesktopApiBaseUrl() {
+  apiBaseUrl = ''
+  initPromise = undefined
+}
+
+function syncBaseUrlFromStatus(status: DesktopServiceStatus | null) {
+  if (status?.running && status.runtime) {
+    setDesktopApiBaseUrl(`http://${status.runtime.host}:${status.runtime.port}`)
+    return
+  }
+
+  clearDesktopApiBaseUrl()
 }
 
 function normalizeBaseUrl(url: string) {

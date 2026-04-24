@@ -267,9 +267,40 @@ pre,
 .dashboard,
 .settings-panel,
 .providers-panel,
-.io-panel {
+.io-panel,
+.startup-panel {
   display: grid;
   gap: 18px;
+}
+
+.startup-card .ant-card-body {
+  display: grid;
+  gap: 14px;
+  padding-block: 28px;
+}
+
+.startup-card p {
+  margin: 0;
+  color: #46555c;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.startup-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 8px 18px;
+}
+
+.startup-form .ant-form-item {
+  margin-bottom: 0;
+}
+
+.startup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
 }
 
 .stats-grid {
@@ -692,7 +723,8 @@ pre,
   .stats-grid,
   .data-grid,
   .form-grid,
-  .env-strip {
+  .env-strip,
+  .startup-form {
     grid-template-columns: minmax(0, 1fr);
   }
 

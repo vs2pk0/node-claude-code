@@ -1,5 +1,5 @@
 use rfd::FileDialog;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::{BufRead, BufReader},
@@ -43,6 +43,25 @@ struct StoredConfig {
     port: Option<u16>,
 }
 
+#[derive(Clone, Serialize)]
+struct ServiceAddressPayload {
+    host: String,
+    port: u16,
+}
+
+#[derive(Clone, Serialize)]
+struct DesktopServiceStatusPayload {
+    running: bool,
+    configured: ServiceAddressPayload,
+    runtime: Option<ServiceAddressPayload>,
+    #[serde(rename = "dataDir")]
+    data_dir: String,
+    #[serde(rename = "settingsPath")]
+    settings_path: String,
+    #[serde(rename = "databasePath")]
+    database_path: String,
+}
+
 impl Drop for ServiceState {
     fn drop(&mut self) {
         stop_embedded_service(self);
@@ -52,6 +71,42 @@ impl Drop for ServiceState {
 #[tauri::command]
 fn service_base_url(state: State<'_, ServiceState>) -> Result<String, String> {
     current_runtime(state.inner()).map(|runtime| runtime.base_url)
+}
+
+#[tauri::command]
+fn desktop_service_status(
+    state: State<'_, ServiceState>,
+) -> Result<DesktopServiceStatusPayload, String> {
+    read_service_status(state.inner()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_bootstrap_config(
+    state: State<'_, ServiceState>,
+    host: String,
+    port: u16,
+) -> Result<DesktopServiceStatusPayload, String> {
+    write_bootstrap_config(host, port)
+        .and_then(|_| read_service_status(state.inner()))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn start_embedded_service(
+    app: AppHandle,
+    state: State<'_, ServiceState>,
+) -> Result<DesktopServiceStatusPayload, String> {
+    ensure_embedded_service_running(&app, state.inner())
+        .and_then(|_| read_service_status(state.inner()))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn stop_embedded_service_command(
+    state: State<'_, ServiceState>,
+) -> Result<DesktopServiceStatusPayload, String> {
+    stop_embedded_service(state.inner());
+    read_service_status(state.inner()).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -106,6 +161,10 @@ pub fn run() {
         .on_window_event(handle_window_event)
         .invoke_handler(tauri::generate_handler![
             service_base_url,
+            desktop_service_status,
+            save_bootstrap_config,
+            start_embedded_service,
+            stop_embedded_service_command,
             export_config_file,
             open_config_dir,
             restart_embedded_service
@@ -119,7 +178,6 @@ pub fn run() {
                 )?;
             }
 
-            start_embedded_service(app.handle(), app.state::<ServiceState>().inner())?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -167,10 +225,7 @@ fn request_exit_confirmation(app: &AppHandle, state: &ServiceState) {
         return;
     }
 
-    if state
-        .exit_prompt_open
-        .swap(true, Ordering::SeqCst)
-    {
+    if state.exit_prompt_open.swap(true, Ordering::SeqCst) {
         return;
     }
 
@@ -193,10 +248,16 @@ fn request_exit_confirmation(app: &AppHandle, state: &ServiceState) {
         });
 }
 
-fn start_embedded_service(
+fn ensure_embedded_service_running(
     app: &AppHandle,
     state: &ServiceState,
 ) -> Result<ServiceRuntime, Box<dyn std::error::Error>> {
+    if let Ok(runtime_guard) = state.runtime.lock() {
+        if let Some(runtime) = runtime_guard.clone() {
+            return Ok(runtime);
+        }
+    }
+
     let data_dir = desktop_data_dir()?;
     fs::create_dir_all(&data_dir)?;
     let runtime = load_runtime(&data_dir)?;
@@ -305,6 +366,74 @@ fn stop_embedded_service(state: &ServiceState) {
     if let Ok(mut runtime_guard) = state.runtime.lock() {
         *runtime_guard = None;
     }
+}
+
+fn read_service_status(
+    state: &ServiceState,
+) -> Result<DesktopServiceStatusPayload, Box<dyn std::error::Error>> {
+    let data_dir = desktop_data_dir()?;
+    fs::create_dir_all(&data_dir)?;
+    let configured_runtime = load_runtime(&data_dir)?;
+    let runtime = state
+        .runtime
+        .lock()
+        .ok()
+        .and_then(|runtime| runtime.clone());
+
+    Ok(DesktopServiceStatusPayload {
+        running: runtime.is_some(),
+        configured: ServiceAddressPayload {
+            host: configured_runtime.host,
+            port: configured_runtime.port,
+        },
+        runtime: runtime.map(|runtime| ServiceAddressPayload {
+            host: runtime.host,
+            port: runtime.port,
+        }),
+        data_dir: configured_runtime.data_dir.display().to_string(),
+        settings_path: settings_path(&configured_runtime.data_dir)
+            .display()
+            .to_string(),
+        database_path: database_path(&configured_runtime.data_dir)
+            .display()
+            .to_string(),
+    })
+}
+
+fn write_bootstrap_config(host: String, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let trimmed_host = host.trim();
+    if trimmed_host.is_empty() {
+        return Err("HOST 不能为空".into());
+    }
+
+    let data_dir = desktop_data_dir()?;
+    fs::create_dir_all(&data_dir)?;
+    let settings_path = settings_path(&data_dir);
+
+    let mut payload = if settings_path.exists() {
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&settings_path)?)?
+    } else {
+        serde_json::json!({})
+    };
+
+    let object = payload
+        .as_object_mut()
+        .ok_or("settings.json 必须是 JSON 对象")?;
+
+    object.insert(
+        String::from("HOST"),
+        serde_json::Value::String(String::from(trimmed_host)),
+    );
+    object.insert(
+        String::from("PORT"),
+        serde_json::Value::Number(serde_json::Number::from(port)),
+    );
+
+    fs::write(
+        settings_path,
+        format!("{}\n", serde_json::to_string_pretty(&payload)?),
+    )?;
+    Ok(())
 }
 
 fn current_runtime(state: &ServiceState) -> Result<ServiceRuntime, String> {
@@ -417,6 +546,14 @@ fn desktop_data_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     {
         Ok(std::env::current_dir()?.join("data"))
     }
+}
+
+fn settings_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("settings.json")
+}
+
+fn database_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("node-claude-code.db")
 }
 
 fn ensure_executable(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
