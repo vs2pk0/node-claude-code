@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
@@ -6,7 +7,11 @@ import { defaultConfig } from './defaultConfig.js'
 import { parseConfig } from './validation.js'
 import type { AppConfig, RequestRecord, RequestRecordInput, StatsSummary } from './types.js'
 
-const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), 'data'))
+const defaultDataDir = process.platform === 'darwin'
+  ? path.join(os.homedir(), '.node-claude-code')
+  : path.join(process.cwd(), 'data')
+
+const dataDir = path.resolve(process.env.DATA_DIR ?? defaultDataDir)
 const settingsPath = path.join(dataDir, 'settings.json')
 const databasePath = path.join(dataDir, 'node-claude-code.db')
 

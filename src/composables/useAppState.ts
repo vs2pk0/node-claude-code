@@ -2,6 +2,7 @@ import { computed, reactive, ref } from 'vue'
 import type { UploadProps } from 'ant-design-vue'
 import { message } from 'ant-design-vue'
 import { exportConfig, getConfig, getHealth, getStatsSummary, importConfig, saveConfig, type HealthPayload } from '@/api'
+import { isDesktopApp, openDesktopConfigDirectory, restartDesktopService, saveDesktopExportFile } from '@/desktop'
 import type { ApiProtocol, AppConfig, ProviderConfig, RouterStrategy, StatsSummary } from '@/types'
 import { readError } from '@/utils/format'
 
@@ -149,6 +150,7 @@ async function persistConfig() {
     return
   }
 
+  const previousConfig = deepClone(draft.value)
   const materialized = materializeDraft()
   if (!materialized) {
     return
@@ -158,7 +160,7 @@ async function persistConfig() {
   try {
     draft.value = await saveConfig(materialized)
     syncProviderEditors()
-    message.success('已保存')
+    await applyRuntimeConfigIfNeeded(previousConfig, draft.value, 'save')
   } catch (error) {
     message.error(readError(error))
   } finally {
@@ -169,11 +171,23 @@ async function persistConfig() {
 async function downloadSettings() {
   try {
     const blob = await exportConfig()
+    const fileName = 'settings.json'
+
+    if (isDesktopApp()) {
+      const savedPath = await saveDesktopExportFile(await blob.text(), fileName)
+      if (savedPath) {
+        message.success(`已导出到 ${savedPath}`)
+      }
+      return
+    }
+
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = 'settings.json'
+    link.download = fileName
+    document.body.append(link)
     link.click()
+    link.remove()
     URL.revokeObjectURL(url)
   } catch (error) {
     message.error(readError(error))
@@ -183,12 +197,13 @@ async function downloadSettings() {
 const beforeImport: UploadProps['beforeUpload'] = async (file) => {
   loading.importing = true
   try {
+    const previousConfig = draft.value ? deepClone(draft.value) : undefined
     const text = await file.text()
     const payload = JSON.parse(text) as AppConfig
     draft.value = await importConfig(payload)
     syncProviderEditors()
+    await applyRuntimeConfigIfNeeded(previousConfig, draft.value, 'import')
     await loadStats()
-    message.success('已导入')
   } catch (error) {
     message.error(readError(error))
   } finally {
@@ -196,6 +211,37 @@ const beforeImport: UploadProps['beforeUpload'] = async (file) => {
   }
 
   return false
+}
+
+async function openConfigDirectory() {
+  try {
+    const path = await openDesktopConfigDirectory()
+    if (path) {
+      message.success(`已打开 ${path}`)
+    }
+  } catch (error) {
+    message.error(readError(error))
+  }
+}
+
+async function applyRuntimeConfigIfNeeded(previousConfig: AppConfig | undefined, nextConfig: AppConfig, source: 'save' | 'import') {
+  const addressChanged = hasServerAddressChange(previousConfig, nextConfig)
+
+  if (isDesktopApp() && addressChanged) {
+    const nextBaseUrl = await restartDesktopService()
+    await Promise.all([loadHealth(), loadStats()])
+    message.success(source === 'save' ? `已保存，端口已应用到 ${nextBaseUrl}` : `已导入，端口已应用到 ${nextBaseUrl}`)
+    return
+  }
+
+  await loadHealth()
+
+  if (addressChanged) {
+    message.success(source === 'save' ? '已保存，Host/Port 将在下次重启后生效' : '已导入，Host/Port 将在下次重启后生效')
+    return
+  }
+
+  message.success(source === 'save' ? '已保存' : '已导入')
 }
 
 function addProvider() {
@@ -807,6 +853,14 @@ function normalizeRouterStrategy(strategy: unknown): RouterStrategy {
   return strategy === 'loadBalance' || strategy === 'random' ? strategy : 'sequence'
 }
 
+function hasServerAddressChange(previousConfig: AppConfig | undefined, nextConfig: AppConfig) {
+  if (!previousConfig) {
+    return false
+  }
+
+  return previousConfig.HOST !== nextConfig.HOST || previousConfig.PORT !== nextConfig.PORT
+}
+
 function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number) {
   const [item] = items.splice(fromIndex, 1)
   items.splice(toIndex, 0, item)
@@ -1065,6 +1119,7 @@ export function useAppState() {
     loadHealth,
     persistConfig,
     downloadSettings,
+    openConfigDirectory,
     beforeImport,
     addProvider,
     importProviderFromCurl,

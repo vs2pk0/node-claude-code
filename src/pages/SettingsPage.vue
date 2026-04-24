@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { CodeOutlined, CopyOutlined, InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { CodeOutlined, CopyOutlined, FolderOpenOutlined, InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { deleteRequestRecord, resetStats } from '@/api'
 import RecentRequestsTable from '@/components/RecentRequestsTable.vue'
@@ -10,10 +10,12 @@ import { formatNumber, readError } from '@/utils/format'
 
 const {
   draft,
+  health,
   routeOptions,
   modelAliasConflicts,
   modelConflictWarningsEnabled,
   originUrl,
+  openConfigDirectory,
   summary,
   loadStats,
 } = useAppState()
@@ -71,6 +73,24 @@ const claudeCodeConfig = computed(() => {
 })
 
 const claudeCodeJson = computed(() => JSON.stringify(claudeCodeConfig.value, null, 2))
+const serviceStatus = computed(() => {
+  const config = draft.value
+  const runtime = health.value?.runtime
+  const dataDir = health.value?.dataDir
+  if (!config) {
+    return null
+  }
+
+  const configured = `${config.HOST}:${config.PORT}`
+  const currentRuntime = `${runtime?.host || config.HOST}:${runtime?.port || config.PORT}`
+
+  return {
+    configured,
+    currentRuntime,
+    dataDir,
+    matches: configured === currentRuntime,
+  }
+})
 
 function hasMultipleTargets(rule: RouterRuleConfig) {
   return rule.targets.length > 1
@@ -178,11 +198,25 @@ function randomBase64Url(byteLength: number) {
     <a-card class="tool-card">
       <template #title>本地服务</template>
       <template #extra>
-        <a-button @click="claudeConfigOpen = true">
-          <template #icon><CodeOutlined /></template>
-          Claude Code JSON 配置
-        </a-button>
+        <div class="section-actions">
+          <a-button @click="openConfigDirectory">
+            <template #icon><FolderOpenOutlined /></template>
+            打开配置文件夹
+          </a-button>
+          <a-button @click="claudeConfigOpen = true">
+            <template #icon><CodeOutlined /></template>
+            Claude Code JSON 配置
+          </a-button>
+        </div>
       </template>
+      <a-alert
+        v-if="serviceStatus"
+        :type="serviceStatus.matches ? 'success' : 'warning'"
+        show-icon
+        class="service-status-alert"
+        :message="serviceStatus.matches ? `运行端口已生效：${serviceStatus.currentRuntime}` : `当前运行中：${serviceStatus.currentRuntime}`"
+        :description="serviceStatus.matches ? `配置目录：${serviceStatus.dataDir || 'loading'}` : `已保存配置：${serviceStatus.configured}，当前进程尚未切换`"
+      />
       <a-form layout="vertical">
         <div class="form-grid">
           <a-form-item label="Host">

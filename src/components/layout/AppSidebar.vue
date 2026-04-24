@@ -2,7 +2,6 @@
 import { computed, h, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ApiOutlined,
   BarChartOutlined,
   CloudServerOutlined,
   ImportOutlined,
@@ -11,6 +10,7 @@ import {
   SettingOutlined,
 } from '@ant-design/icons-vue'
 import type { MenuProps } from 'ant-design-vue'
+import appLogo from '@/assets/app-logo.png'
 
 defineProps<{
   uiUrl: string
@@ -66,10 +66,10 @@ function hIcon(component: Component) {
   <a-layout-sider class="side" :collapsed="collapsed" :collapsed-width="72" width="232">
     <div class="brand">
       <div class="brand-mark">
-        <ApiOutlined />
+        <img :src="appLogo" alt="Node Claude Code" class="brand-logo" />
       </div>
       <div v-if="!collapsed" class="brand-copy">
-        <h1>Claude Port Router</h1>
+        <h1>Node Claude Code</h1>
         <p>{{ uiUrl || 'loading' }}</p>
       </div>
     </div>

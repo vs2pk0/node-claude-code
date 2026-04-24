@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { DownloadOutlined, ImportOutlined, SaveOutlined } from '@ant-design/icons-vue'
+import { DownloadOutlined, FolderOpenOutlined, ImportOutlined, SaveOutlined } from '@ant-design/icons-vue'
 import { useAppState } from '@/composables/useAppState'
 
-const { draft, loading, originUrl, jsonPreview, beforeImport, downloadSettings, persistConfig } = useAppState()
+const { draft, loading, originUrl, jsonPreview, health, beforeImport, downloadSettings, openConfigDirectory, persistConfig } = useAppState()
 </script>
 
 <template>
@@ -20,6 +20,10 @@ const { draft, loading, originUrl, jsonPreview, beforeImport, downloadSettings, 
           <template #icon><DownloadOutlined /></template>
           导出 JSON
         </a-button>
+        <a-button @click="openConfigDirectory">
+          <template #icon><FolderOpenOutlined /></template>
+          打开配置文件夹
+        </a-button>
         <a-button type="primary" :loading="loading.saving" @click="persistConfig">
           <template #icon><SaveOutlined /></template>
           保存当前配置
@@ -33,6 +37,10 @@ const { draft, loading, originUrl, jsonPreview, beforeImport, downloadSettings, 
         <div>
           <span>ANTHROPIC_AUTH_TOKEN</span>
           <code>{{ draft.APIKEY || 'empty' }}</code>
+        </div>
+        <div>
+          <span>配置目录</span>
+          <code>{{ health?.dataDir || 'loading' }}</code>
         </div>
       </div>
     </a-card>

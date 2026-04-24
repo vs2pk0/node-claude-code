@@ -1,4 +1,5 @@
 import type { AppConfig, RequestRecord, StatsSummary } from './types'
+import { getApiUrl, initApiBaseUrl } from './desktop'
 
 export interface HealthPayload {
   ok: boolean
@@ -16,7 +17,9 @@ export interface HealthPayload {
 }
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+  await initApiBaseUrl()
+
+  const response = await fetch(getApiUrl(url), {
     ...init,
     headers: {
       'content-type': 'application/json',
@@ -56,7 +59,9 @@ export function importConfig(config: AppConfig) {
 }
 
 export async function exportConfig() {
-  const response = await fetch('/api/config/export')
+  await initApiBaseUrl()
+
+  const response = await fetch(getApiUrl('/api/config/export'))
   if (!response.ok) {
     throw new Error(response.statusText)
   }

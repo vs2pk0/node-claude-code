@@ -50,6 +50,36 @@ npm run build
 npm run start
 ```
 
+## Tauri 桌面版
+
+使用 Tauri 打包 macOS 桌面应用：
+
+```bash
+npm run tauri:build
+```
+
+构建产物：
+
+```text
+src-tauri/target/release/bundle/macos/Node Claude Code.app
+src-tauri/target/release/bundle/dmg/Node Claude Code_0.0.0_aarch64.dmg
+```
+
+桌面版会在启动时自动拉起内嵌的本地服务，前端直接连接这个本地服务。
+
+macOS 下配置和数据默认存放到：
+
+```text
+/Users/<用户名>/.node-claude-code
+```
+
+其中包括：
+
+- `settings.json`
+- `node-claude-code.db`
+- `logs/`
+- `backups/`
+
 ## 延迟压测
 
 可以用 `bench:latency` 对比直连上游、Claude Code 直转、OpenAI 转 Anthropic 三类路径的响应耗时：

@@ -9,10 +9,12 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-desktop
 dist-server
 dist-ssr
 *.local
 data/
+.codex-test/
 
 # Editor directories and files
 .vscode/*
@@ -24,3 +26,5 @@ data/
 *.njsproj
 *.sln
 *.sw?
+src-tauri/target/
+src-tauri/resources/

@@ -81,6 +81,13 @@ pre,
   font-size: 22px;
 }
 
+.brand-logo {
+  display: block;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
 .brand h1,
 .brand p,
 .title-block h2 {
@@ -428,6 +435,10 @@ pre,
   justify-content: space-between;
   width: 100%;
   gap: 12px;
+}
+
+.service-status-alert {
+  margin-bottom: 18px;
 }
 
 .provider-table {
