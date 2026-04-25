@@ -349,7 +349,6 @@ fn spawn_service_process(
         .env("HOST", &runtime.host)
         .env("PORT", runtime.port.to_string())
         .env("NODE_ENV", "production")
-        .env("SERVE_UI", "false")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?)

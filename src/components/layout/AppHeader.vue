@@ -5,7 +5,7 @@ import { DownloadOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlin
 import { useAppState } from '@/composables/useAppState'
 
 const route = useRoute()
-const { draft, loading, serviceReady, serviceRunning, refreshAll, downloadSettings, persistConfig, startService, stopService } = useAppState()
+const { draft, desktopMode, loading, serviceReady, serviceRunning, refreshAll, downloadSettings, persistConfig, startService, stopService } = useAppState()
 
 const pageTitle = computed(() => String(route.meta.title ?? '运行概览'))
 </script>
@@ -18,7 +18,7 @@ const pageTitle = computed(() => String(route.meta.title ?? '运行概览'))
     </div>
     <div class="toolbar">
       <a-button
-        v-if="!serviceRunning"
+        v-if="desktopMode && !serviceRunning"
         type="primary"
         ghost
         :loading="loading.starting"
@@ -28,7 +28,7 @@ const pageTitle = computed(() => String(route.meta.title ?? '运行概览'))
         启动
       </a-button>
       <a-button
-        v-else
+        v-else-if="desktopMode"
         danger
         ghost
         :loading="loading.stopping"

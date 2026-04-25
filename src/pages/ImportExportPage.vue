@@ -2,7 +2,7 @@
 import { DownloadOutlined, FolderOpenOutlined, ImportOutlined, SaveOutlined } from '@ant-design/icons-vue'
 import { useAppState } from '@/composables/useAppState'
 
-const { draft, loading, originUrl, jsonPreview, health, beforeImport, downloadSettings, openConfigDirectory, persistConfig } = useAppState()
+const { draft, desktopMode, loading, originUrl, jsonPreview, health, beforeImport, downloadSettings, openConfigDirectory, persistConfig } = useAppState()
 </script>
 
 <template>
@@ -20,7 +20,7 @@ const { draft, loading, originUrl, jsonPreview, health, beforeImport, downloadSe
           <template #icon><DownloadOutlined /></template>
           导出 JSON
         </a-button>
-        <a-button @click="openConfigDirectory">
+        <a-button v-if="desktopMode" @click="openConfigDirectory">
           <template #icon><FolderOpenOutlined /></template>
           打开配置文件夹
         </a-button>

@@ -10,6 +10,7 @@ import { formatNumber, readError } from '@/utils/format'
 
 const {
   draft,
+  desktopMode,
   health,
   routeOptions,
   modelAliasConflicts,
@@ -199,7 +200,7 @@ function randomBase64Url(byteLength: number) {
       <template #title>本地服务</template>
       <template #extra>
         <div class="section-actions">
-          <a-button @click="openConfigDirectory">
+          <a-button v-if="desktopMode" @click="openConfigDirectory">
             <template #icon><FolderOpenOutlined /></template>
             打开配置文件夹
           </a-button>

@@ -76,6 +76,7 @@ const routeOptions = computed(() => {
 
 const modelAliasConflicts = computed(() => readModelAliasConflicts())
 const modelConflictWarningsEnabled = computed(() => draft.value?.UI?.showModelConflictWarnings !== false)
+const desktopMode = isDesktopApp()
 const serviceRunning = computed(() => desktopService.value?.running ?? !isDesktopApp())
 const serviceReady = computed(() => !isDesktopApp() || serviceRunning.value)
 
@@ -1270,6 +1271,7 @@ export function useAppState() {
     startupHost,
     startupPort,
     loading,
+    desktopMode,
     routeOptions,
     modelAliasConflicts,
     modelConflictWarningsEnabled,

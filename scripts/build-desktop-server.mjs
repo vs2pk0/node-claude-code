@@ -10,6 +10,7 @@ const resourcesDir = path.join(projectRoot, 'src-tauri', 'resources')
 const runtimeRoot = path.join(resourcesDir, 'app')
 const runtimeNodeModules = path.join(runtimeRoot, 'node_modules')
 const runtimeBinDir = path.join(resourcesDir, 'bin')
+const runtimeWebDist = path.join(runtimeRoot, 'dist')
 const serverEntry = path.join(runtimeRoot, 'server.cjs')
 const nodeTarget = path.join(runtimeBinDir, process.platform === 'win32' ? 'node.exe' : 'node')
 
@@ -27,13 +28,13 @@ await build({
   external: ['better-sqlite3', 'vite'],
   define: {
     'process.env.NODE_ENV': '"production"',
-    'process.env.SERVE_UI': '"false"',
   },
 })
 
 copyPackage('better-sqlite3', ['package.json', 'LICENSE', 'lib', 'build'])
 copyPackage('bindings')
 copyPackage('file-uri-to-path')
+copyDirectory(path.join(projectRoot, 'dist'), runtimeWebDist)
 
 await fs.promises.copyFile(process.execPath, nodeTarget)
 
@@ -55,4 +56,8 @@ function copyPackage(packageName, items) {
   for (const item of items) {
     fs.cpSync(path.join(sourceDir, item), path.join(destinationDir, item), { recursive: true })
   }
+}
+
+function copyDirectory(sourceDir, destinationDir) {
+  fs.cpSync(sourceDir, destinationDir, { recursive: true })
 }
