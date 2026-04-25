@@ -7,10 +7,13 @@ import { createProxyRouter } from './proxy.js';
 import { storage } from './storage.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
-const shouldServeUi = process.env.SERVE_UI !== 'false';
 const projectRoot = process.env.APP_ROOT || process.cwd();
 const frontendDist = path.join(projectRoot, 'dist');
 const uiBasePath = '/ui';
+
+function shouldServeUi() {
+    return storage.getConfig().UI.enableBrowserUiAccess !== false;
+}
 
 async function main() {
     const app = express();
@@ -25,7 +28,7 @@ async function main() {
     app.use('/api', createApiRouter());
     app.use('/v1', createProxyRouter());
     app.get('/', (_req, res) => {
-        if (shouldServeUi) {
+        if (shouldServeUi()) {
             res.redirect(uiBasePath);
             return;
         }
@@ -36,33 +39,51 @@ async function main() {
         });
     });
 
-    if (shouldServeUi) {
-        if (isProduction) {
-            app.use(uiBasePath, express.static(frontendDist));
-            app.get(/^\/ui(?:\/.*)?$/, (_req, res) => {
-                res.sendFile(path.join(frontendDist, 'index.html'));
-            });
-        } else {
-            const { createServer: createViteServer } = await import('vite');
-            const vite = await createViteServer({
-                root: projectRoot,
-                server: {
-                    middlewareMode: true,
-                    hmr: false
-                },
-                appType: 'spa'
-            });
+    if (isProduction) {
+        app.use(uiBasePath, (req, res, next) => {
+            if (!shouldServeUi()) {
+                res.status(404).send('UI mapping is disabled');
+                return;
+            }
 
-            app.use(uiBasePath, vite.middlewares);
-        }
+            express.static(frontendDist)(req, res, next);
+        });
+        app.get(/^\/ui(?:\/.*)?$/, (_req, res) => {
+            if (!shouldServeUi()) {
+                res.status(404).send('UI mapping is disabled');
+                return;
+            }
+
+            res.sendFile(path.join(frontendDist, 'index.html'));
+        });
+    } else {
+        const { createServer: createViteServer } = await import('vite');
+        const vite = await createViteServer({
+            root: projectRoot,
+            server: {
+                middlewareMode: true,
+                hmr: false
+            },
+            appType: 'spa'
+        });
+
+        app.use(uiBasePath, (req, res, next) => {
+            if (!shouldServeUi()) {
+                res.status(404).send('UI mapping is disabled');
+                return;
+            }
+
+            vite.middlewares(req, res, next);
+        });
     }
 
     const server = app.listen(port, host, () => {
         const address = server.address();
         const resolvedPort = typeof address === 'object' && address ? address.port : port;
         const origin = `http://${host}:${resolvedPort}`;
-        const state = !shouldServeUi ? 'api-only' : fs.existsSync(frontendDist) || !isProduction ? 'ready' : 'frontend-not-built';
-        const target = shouldServeUi ? `${origin}${uiBasePath}` : origin;
+        const uiEnabled = shouldServeUi();
+        const state = !uiEnabled ? 'api-only' : fs.existsSync(frontendDist) || !isProduction ? 'ready' : 'frontend-not-built';
+        const target = uiEnabled ? `${origin}${uiBasePath}` : origin;
 
         console.log(`[router] ${state} ${target}`);
         console.log(`[router] settings ${storage.settingsPath}`);

@@ -349,6 +349,12 @@ function randomBase64Url(byteLength: number) {
           <a-form-item label="显示模型冲突提示">
             <a-switch v-model:checked="draft.UI.showModelConflictWarnings" />
           </a-form-item>
+          <a-form-item label="允许浏览器访问 /ui">
+            <a-switch v-model:checked="draft.UI.enableBrowserUiAccess" />
+            <div class="field-help-text">
+              关闭后将不再对浏览器暴露 <code>{{ `${originUrl}/ui/` }}</code>，桌面应用内界面不受影响。
+            </div>
+          </a-form-item>
         </div>
       </a-form>
     </a-card>

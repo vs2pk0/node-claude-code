@@ -117,6 +117,7 @@ const statsSchema = z
 const uiSchema = z
   .object({
     showModelConflictWarnings: z.coerce.boolean().default(true),
+    enableBrowserUiAccess: z.coerce.boolean().default(true),
   })
   .passthrough()
 
@@ -146,6 +147,7 @@ export const configSchema = z
     }),
     UI: uiSchema.default({
       showModelConflictWarnings: true,
+      enableBrowserUiAccess: true,
     }),
     CUSTOM_ROUTER_PATH: z.string().default(''),
   })

@@ -55,6 +55,7 @@ export interface StatsConfig {
 
 export interface UIConfig {
   showModelConflictWarnings: boolean
+  enableBrowserUiAccess: boolean
   [key: string]: unknown
 }
 

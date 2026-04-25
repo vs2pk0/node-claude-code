@@ -121,6 +121,7 @@ export const defaultConfig: AppConfig = {
   },
   UI: {
     showModelConflictWarnings: true,
+    enableBrowserUiAccess: true,
   },
   CUSTOM_ROUTER_PATH: '',
 }
