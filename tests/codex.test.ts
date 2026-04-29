@@ -54,6 +54,7 @@ before(async () => {
 
 after(async () => {
   await Promise.all([closeServer(proxyServer), closeServer(upstreamServer)])
+  storage.close()
   rmSync(dataDir, { recursive: true, force: true })
 })
 

@@ -26,6 +26,7 @@ db.pragma('busy_timeout = 5000')
 let cachedConfig: AppConfig | undefined
 const pendingRequestRecords: RequestRecordInput[] = []
 let requestFlushScheduled = false
+let storageClosed = false
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS settings (
@@ -70,7 +71,9 @@ const insertRequestStatement = db.prepare(`
 `)
 
 process.once('exit', () => {
-  flushPendingRequests()
+  if (!storageClosed) {
+    flushPendingRequests()
+  }
 })
 
 export const storage = {
@@ -88,6 +91,7 @@ export const storage = {
   deleteAllRequests,
   deleteRequest,
   deleteModelStats,
+  close,
 }
 
 function getConfig(): AppConfig {
@@ -183,6 +187,11 @@ function enqueueRequest(input: RequestRecordInput) {
 
 function flushPendingRequests() {
   requestFlushScheduled = false
+
+  if (storageClosed) {
+    return 0
+  }
+
   if (!pendingRequestRecords.length) {
     return 0
   }
@@ -196,6 +205,16 @@ function flushPendingRequests() {
 
   insertBatch(batch)
   return batch.length
+}
+
+function close() {
+  if (storageClosed) {
+    return
+  }
+
+  flushPendingRequests()
+  db.close()
+  storageClosed = true
 }
 
 function getSummary(): StatsSummary {

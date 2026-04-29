@@ -66,6 +66,7 @@ afterEach(() => {
 
 after(async () => {
   await Promise.all([closeServer(proxyServer), closeServer(upstreamServer)])
+  storage.close()
   rmSync(process.env.DATA_DIR!, { recursive: true, force: true })
 })
 
