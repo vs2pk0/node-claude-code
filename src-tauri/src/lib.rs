@@ -144,6 +144,15 @@ fn open_config_dir(state: State<'_, ServiceState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !is_allowed_external_url(&url) {
+        return Err(String::from("只允许打开 OpenAI 授权或 ChatGPT 设置页面"));
+    }
+
+    open_url(&url).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn restart_embedded_service(
     app: AppHandle,
     state: State<'_, ServiceState>,
@@ -167,6 +176,7 @@ pub fn run() {
             stop_embedded_service_command,
             export_config_file,
             open_config_dir,
+            open_external_url,
             restart_embedded_service
         ])
         .setup(|app| {
@@ -302,6 +312,7 @@ fn spawn_service_with_runtime(
     runtime: ServiceRuntime,
 ) -> Result<ServiceRuntime, Box<dyn std::error::Error>> {
     fs::create_dir_all(&runtime.data_dir)?;
+    terminate_stale_service_processes(app)?;
 
     let mut child = spawn_service_process(app, &runtime)?;
 
@@ -476,12 +487,16 @@ fn wait_for_service(
     let deadline = Instant::now() + timeout;
 
     while Instant::now() < deadline {
-        if can_connect(&runtime.host, runtime.port) {
-            return Ok(());
-        }
-
         if let Some(status) = child.try_wait()? {
             return Err(format!("embedded service exited early with status {status}").into());
+        }
+
+        if can_connect(&runtime.host, runtime.port) {
+            thread::sleep(Duration::from_millis(200));
+            if let Some(status) = child.try_wait()? {
+                return Err(format!("embedded service exited early with status {status}").into());
+            }
+            return Ok(());
         }
 
         thread::sleep(Duration::from_millis(200));
@@ -503,6 +518,56 @@ fn can_connect(host: &str, port: u16) -> bool {
         .ok()
         .and_then(|mut addresses| addresses.next())
         .is_some_and(|socket_addr| TcpStream::connect_timeout(&socket_addr, timeout).is_ok())
+}
+
+fn terminate_stale_service_processes(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let server_entry = embedded_runtime_root(app)?.join("server.cjs");
+    terminate_processes_matching_path(&server_entry)
+}
+
+#[cfg(target_os = "macos")]
+fn terminate_processes_matching_path(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let pattern = path.display().to_string();
+    let output = Command::new("pgrep").arg("-f").arg(&pattern).output()?;
+    if !output.status.success() {
+        return Ok(());
+    }
+
+    let current_pid = std::process::id();
+    for raw_pid in String::from_utf8_lossy(&output.stdout).lines() {
+        let Ok(pid) = raw_pid.trim().parse::<u32>() else {
+            continue;
+        };
+        if pid == current_pid {
+            continue;
+        }
+
+        let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+    }
+
+    thread::sleep(Duration::from_millis(500));
+
+    let output = Command::new("pgrep").arg("-f").arg(&pattern).output()?;
+    if !output.status.success() {
+        return Ok(());
+    }
+    for raw_pid in String::from_utf8_lossy(&output.stdout).lines() {
+        let Ok(pid) = raw_pid.trim().parse::<u32>() else {
+            continue;
+        };
+        if pid == current_pid {
+            continue;
+        }
+
+        let _ = Command::new("kill").arg("-KILL").arg(pid.to_string()).status();
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn terminate_processes_matching_path(_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
 }
 
 fn embedded_runtime_root(app: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -595,6 +660,43 @@ fn open_path(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         }
         return Err("failed to open path".into());
     }
+}
+
+fn open_url(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("open").arg(url).status()?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err("failed to open url".into());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .status()?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err("failed to open url".into());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let status = Command::new("xdg-open").arg(url).status()?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err("failed to open url".into());
+    }
+}
+
+fn is_allowed_external_url(url: &str) -> bool {
+    url.starts_with("https://auth.openai.com/")
+        || url.starts_with("https://chatgpt.com/")
+        || url.starts_with("https://chat.openai.com/")
 }
 
 fn pipe_logs<T>(stream: T, channel: &'static str)

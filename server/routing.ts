@@ -65,8 +65,19 @@ export function allModels(config: AppConfig) {
     })),
   )
 
+  const codexModels = config.Codex.enabled
+    ? config.Codex.models.flatMap((model) => {
+      const ids = model.alias && model.alias !== model.name ? [model.name, model.alias] : [model.name]
+      return ids.map((id) => ({
+        id,
+        object: 'model',
+        owned_by: 'codex',
+      }))
+    })
+    : []
+
   const seen = new Set<string>()
-  return [...routeModels, ...providerModels].filter((model) => {
+  return [...routeModels, ...providerModels, ...codexModels].filter((model) => {
     if (seen.has(model.id)) {
       return false
     }
@@ -159,6 +170,10 @@ function routeTargetMatchesModel(config: AppConfig, target: RouteTarget, model: 
     return true
   }
 
+  if (isCodexProvider(target.provider)) {
+    return config.Codex.models.some((item) => item.name === target.model && item.alias === model)
+  }
+
   const provider = config.Providers.find((item) => item.name === target.provider)
   return provider?.model_aliases?.[target.model] === model
 }
@@ -206,6 +221,20 @@ function resolveTarget(
   routeKey: string,
   delayMs = 0,
 ): RouteDecision {
+  if (isCodexProvider(providerName)) {
+    if (!config.Codex.enabled) {
+      throw httpError(400, 'Codex proxy is disabled')
+    }
+
+    return {
+      provider: codexRouteProvider(config),
+      providerName: 'codex',
+      targetModel: resolveCodexTargetModel(config, model),
+      routeKey,
+      delayMs,
+    }
+  }
+
   const provider = config.Providers.find((item) => item.name === providerName)
   if (!provider) {
     throw httpError(400, `Provider "${providerName}" was not found`)
@@ -221,6 +250,36 @@ function resolveTarget(
     targetModel: model,
     routeKey,
     delayMs,
+  }
+}
+
+function isCodexProvider(providerName: string) {
+  return providerName.toLowerCase() === 'codex'
+}
+
+function resolveCodexTargetModel(config: AppConfig, model: string) {
+  const codexModel = config.Codex.models.find((item) => item.name === model || item.alias === model)
+  return codexModel?.name || model
+}
+
+function codexRouteProvider(config: AppConfig): ProviderConfig {
+  return {
+    name: 'codex',
+    api_base_url: config.Codex.baseUrl,
+    api_protocol: 'anthropic-messages',
+    api_key: config.Codex.apiKey,
+    api_keys: [],
+    api_key_names: [],
+    api_key_disabled: [],
+    api_key_strategy: 'sequence',
+    models: config.Codex.models.map((model) => model.name),
+    model_aliases: Object.fromEntries(
+      config.Codex.models
+        .filter((model) => model.alias && model.alias !== model.name)
+        .map((model) => [model.name, model.alias]),
+    ),
+    claude_code_forward: false,
+    transformer: {},
   }
 }
 

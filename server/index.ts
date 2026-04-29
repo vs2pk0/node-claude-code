@@ -3,6 +3,7 @@ import path from 'node:path';
 import cors from 'cors';
 import express from 'express';
 import { createApiRouter } from './api.js';
+import { createCodexBackendRouter } from './codex.js';
 import { createProxyRouter } from './proxy.js';
 import { storage } from './storage.js';
 
@@ -26,6 +27,7 @@ async function main() {
     app.use(express.json({ limit: '25mb' }));
 
     app.use('/api', createApiRouter());
+    app.use('/backend-api/codex', createCodexBackendRouter());
     app.use('/v1', createProxyRouter());
     app.get('/', (_req, res) => {
         if (shouldServeUi()) {

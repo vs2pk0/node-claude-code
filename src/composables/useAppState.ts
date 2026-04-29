@@ -14,7 +14,7 @@ import {
   stopDesktopService,
   type DesktopServiceStatus,
 } from '@/desktop'
-import type { ApiProtocol, AppConfig, ProviderConfig, RouterStrategy, StatsSummary } from '@/types'
+import type { ApiProtocol, AppConfig, CodexModelConfig, ProviderConfig, RouterStrategy, StatsSummary } from '@/types'
 import { readError } from '@/utils/format'
 
 export interface ProviderEditorState {
@@ -57,20 +57,56 @@ const loading = reactive({
 })
 
 const defaultApiProtocol: ApiProtocol = 'openai-chat'
+const defaultCodexRouteModels: CodexModelConfig[] = [
+  { name: 'gpt-5.2', alias: 'gpt-5.2' },
+  { name: 'gpt-5.3-codex', alias: 'gpt-5.3-codex' },
+  { name: 'gpt-5.3-codex-spark', alias: 'gpt-5.3-codex-spark' },
+  { name: 'gpt-5.4', alias: 'gpt-5.4' },
+  { name: 'gpt-5.4-mini', alias: 'gpt-5.4-mini' },
+  { name: 'gpt-5.5', alias: 'gpt-5.5' },
+  { name: 'gpt-5-codex', alias: 'gpt-5-codex' },
+  { name: 'gpt-5', alias: 'gpt-5' },
+  { name: 'codex-auto-review', alias: 'codex-auto-review' },
+  { name: 'gpt-image-2', alias: 'gpt-image-2' },
+]
 
 let initialized = false
 let statsTimer: number | undefined
 
 const routeOptions = computed(() => {
-  return (
-    draft.value?.Providers.flatMap((provider, index) =>
-      readEditableModelRows(provider, index).map(({ model, alias }) => {
-        return {
-          label: `${provider.name},${alias || model}`,
-          value: `${provider.name},${model}`,
-        }
-      }),
-    ) ?? []
+  const config = draft.value
+  if (!config) {
+    return []
+  }
+
+  const providerOptions = config.Providers.flatMap((provider, index) =>
+    readEditableModelRows(provider, index).map(({ model, alias }) => {
+      return {
+        label: `${provider.name},${alias || model}`,
+        value: `${provider.name},${model}`,
+      }
+    }),
+  )
+
+  const codexModelMap = new Map<string, CodexModelConfig>()
+  for (const model of [...(config.Codex?.models ?? []), ...defaultCodexRouteModels]) {
+    const name = model.name.trim()
+    const alias = model.alias.trim()
+    if (!name || codexModelMap.has(name) || codexModelMap.has(alias)) {
+      continue
+    }
+    codexModelMap.set(name, { name, alias })
+  }
+
+  const codexOptions = Array.from(codexModelMap.values()).map((model) => {
+    return {
+      label: `codex,${model.alias || model.name}`,
+      value: `codex,${model.name}`,
+    }
+  })
+
+  return Array.from(
+    new Map([...providerOptions, ...codexOptions].map((option) => [option.value, option])).values(),
   )
 })
 

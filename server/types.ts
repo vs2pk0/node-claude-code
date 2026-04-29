@@ -53,6 +53,25 @@ export interface StatsConfig {
   [key: string]: unknown
 }
 
+export interface CodexModelConfig {
+  name: string
+  alias: string
+}
+
+export interface CodexConfig {
+  enabled: boolean
+  apiKey: string
+  authFilePath: string
+  authDirectory: string
+  baseUrl: string
+  accountId: string
+  userAgent: string
+  betaFeatures: string
+  headers: Record<string, string>
+  models: CodexModelConfig[]
+  [key: string]: unknown
+}
+
 export interface UIConfig {
   showModelConflictWarnings: boolean
   enableBrowserUiAccess: boolean
@@ -74,6 +93,7 @@ export interface AppConfig {
   Router: RouterConfig
   Concurrency: ConcurrencyConfig
   Stats: StatsConfig
+  Codex: CodexConfig
   UI: UIConfig
   CUSTOM_ROUTER_PATH: string
   [key: string]: unknown

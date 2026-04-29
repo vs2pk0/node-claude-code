@@ -107,6 +107,15 @@ export async function openDesktopConfigDirectory() {
   return invoke<string>('open_config_dir')
 }
 
+export async function openExternalUrl(url: string) {
+  if (!isTauri()) {
+    window.open(url, '_blank', 'noopener,noreferrer')
+    return
+  }
+
+  await invoke<void>('open_external_url', { url })
+}
+
 export async function restartDesktopService() {
   if (!isTauri()) {
     return null

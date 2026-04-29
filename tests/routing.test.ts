@@ -305,6 +305,59 @@ test('ui settings default to showing model conflict warnings', () => {
   assert.equal(disabledConfig.UI.showModelConflictWarnings, false)
 })
 
+test('models endpoint includes enabled codex model aliases', () => {
+  const config = parseConfig({
+    ...defaultConfig,
+    Codex: {
+      ...defaultConfig.Codex,
+      enabled: true,
+      models: [
+        {
+          name: 'real-codex-model',
+          alias: 'public-codex-model',
+        },
+      ],
+    },
+  })
+
+  const modelIds = allModels(config).map((model) => model.id)
+
+  assert.ok(modelIds.includes('real-codex-model'))
+  assert.ok(modelIds.includes('public-codex-model'))
+  assert.ok(modelIds.includes('gpt-5.3-codex'))
+  assert.ok(modelIds.includes('gpt-image-2'))
+})
+
+test('codex route targets resolve as built-in codex provider', () => {
+  const config = parseConfig({
+    ...defaultConfig,
+    Codex: {
+      ...defaultConfig.Codex,
+      enabled: true,
+      models: [
+        {
+          name: 'gpt-5.5',
+          alias: 'gpt-5.5',
+        },
+      ],
+    },
+    Router: {
+      ...defaultConfig.Router,
+      default: {
+        model: 'gpt-5.5',
+        targets: ['codex,gpt-5.5'],
+        strategy: 'sequence',
+      },
+    },
+  })
+
+  const decision = resolveRoute(config, body('gpt-5.5'))
+
+  assert.equal(decision.providerName, 'codex')
+  assert.equal(decision.targetModel, 'gpt-5.5')
+  assert.equal(decision.routeKey, 'default')
+})
+
 function provider(name: string, models: string[], modelAliases?: Record<string, string>) {
   return {
     name,

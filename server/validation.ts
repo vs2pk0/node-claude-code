@@ -114,6 +114,45 @@ const statsSchema = z
   })
   .passthrough()
 
+const codexModelSchema = z
+  .object({
+    name: z.string().default(''),
+    alias: z.string().default(''),
+  })
+  .passthrough()
+
+const defaultCodexModels = [
+  { name: 'gpt-5.2', alias: 'gpt-5.2' },
+  { name: 'gpt-5.3-codex', alias: 'gpt-5.3-codex' },
+  { name: 'gpt-5.3-codex-spark', alias: 'gpt-5.3-codex-spark' },
+  { name: 'gpt-5.4', alias: 'gpt-5.4' },
+  { name: 'gpt-5.4-mini', alias: 'gpt-5.4-mini' },
+  { name: 'gpt-5.5', alias: 'gpt-5.5' },
+  { name: 'gpt-5-codex', alias: 'gpt-5-codex' },
+  { name: 'gpt-5', alias: 'gpt-5' },
+  { name: 'codex-auto-review', alias: 'codex-auto-review' },
+  { name: 'gpt-image-2', alias: 'gpt-image-2' },
+]
+
+const codexSchema = z
+  .object({
+    enabled: z.coerce.boolean().default(false),
+    apiKey: z.string().default(''),
+    authFilePath: z.string().default(''),
+    authDirectory: z.string().default('codex-auths'),
+    baseUrl: z.string().default('https://chatgpt.com/backend-api/codex'),
+    accountId: z.string().default(''),
+    userAgent: z.string().default('codex-tui/0.118.0'),
+    betaFeatures: z.string().default(''),
+    headers: z.record(z.string(), z.string()).default({}),
+    models: z.array(codexModelSchema).default(defaultCodexModels),
+  })
+  .passthrough()
+  .transform((codex) => ({
+    ...codex,
+    models: mergeDefaultCodexModels(codex.models),
+  }))
+
 const uiSchema = z
   .object({
     showModelConflictWarnings: z.coerce.boolean().default(true),
@@ -145,6 +184,18 @@ export const configSchema = z
     Stats: statsSchema.default({
       excludeFailedTokens: false,
     }),
+    Codex: codexSchema.default({
+      enabled: false,
+      apiKey: '',
+      authFilePath: '',
+      authDirectory: 'codex-auths',
+      baseUrl: 'https://chatgpt.com/backend-api/codex',
+      accountId: '',
+      userAgent: 'codex-tui/0.118.0',
+      betaFeatures: '',
+      headers: {},
+      models: defaultCodexModels,
+    }),
     UI: uiSchema.default({
       showModelConflictWarnings: true,
       enableBrowserUiAccess: true,
@@ -159,6 +210,14 @@ export function parseConfig(input: unknown): AppConfig {
 
 export function parseConfigJson(text: string): AppConfig {
   return parseConfig(JSON.parse(text))
+}
+
+function mergeDefaultCodexModels(models: Array<{ name: string; alias: string }>) {
+  const existingKeys = new Set(models.flatMap((model) => [model.name, model.alias].filter(Boolean)))
+  return [
+    ...models,
+    ...defaultCodexModels.filter((model) => !existingKeys.has(model.name) && !existingKeys.has(model.alias)),
+  ]
 }
 
 function normalizeApiKeyEntries(

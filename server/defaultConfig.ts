@@ -119,6 +119,59 @@ export const defaultConfig: AppConfig = {
   Stats: {
     excludeFailedTokens: false,
   },
+  Codex: {
+    enabled: false,
+    apiKey: '',
+    authFilePath: '',
+    authDirectory: 'codex-auths',
+    baseUrl: 'https://chatgpt.com/backend-api/codex',
+    accountId: '',
+    userAgent: 'codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)',
+    betaFeatures: '',
+    headers: {},
+    models: [
+      {
+        name: 'gpt-5.2',
+        alias: 'gpt-5.2',
+      },
+      {
+        name: 'gpt-5.3-codex',
+        alias: 'gpt-5.3-codex',
+      },
+      {
+        name: 'gpt-5.3-codex-spark',
+        alias: 'gpt-5.3-codex-spark',
+      },
+      {
+        name: 'gpt-5.4',
+        alias: 'gpt-5.4',
+      },
+      {
+        name: 'gpt-5.4-mini',
+        alias: 'gpt-5.4-mini',
+      },
+      {
+        name: 'gpt-5.5',
+        alias: 'gpt-5.5',
+      },
+      {
+        name: 'gpt-5-codex',
+        alias: 'gpt-5-codex',
+      },
+      {
+        name: 'gpt-5',
+        alias: 'gpt-5',
+      },
+      {
+        name: 'codex-auto-review',
+        alias: 'codex-auto-review',
+      },
+      {
+        name: 'gpt-image-2',
+        alias: 'gpt-image-2',
+      },
+    ],
+  },
   UI: {
     showModelConflictWarnings: true,
     enableBrowserUiAccess: true,

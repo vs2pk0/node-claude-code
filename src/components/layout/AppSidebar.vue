@@ -4,7 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   BarChartOutlined,
   CloudServerOutlined,
+  CodeOutlined,
   ImportOutlined,
+  LineChartOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   SettingOutlined,
@@ -49,6 +51,16 @@ const menuItems = computed<MenuProps['items']>(() => [
     key: 'providers',
     icon: () => hIcon(CloudServerOutlined),
     label: 'Provider',
+  },
+  {
+    key: 'codex',
+    icon: () => hIcon(CodeOutlined),
+    label: 'Codex',
+  },
+  {
+    key: 'usage',
+    icon: () => hIcon(LineChartOutlined),
+    label: '调用统计',
   },
   {
     key: 'io',

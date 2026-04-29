@@ -7,6 +7,7 @@ import {
   extractOpenAiContent,
   openAiToAnthropic,
 } from './anthropic.js'
+import { handleCodexAnthropicMessages, handleCodexResponses } from './codex.js'
 import { clientClosedError, requestConcurrencyLimiter } from './concurrency.js'
 import { allModels, resolveRoute } from './routing.js'
 import { storage } from './storage.js'
@@ -80,6 +81,14 @@ export function createProxyRouter() {
     })
   })
 
+  router.post('/responses', async (req, res) => {
+    await handleCodexResponses(req, res, 'responses')
+  })
+
+  router.post('/responses/compact', async (req, res) => {
+    await handleCodexResponses(req, res, 'responses/compact')
+  })
+
   router.post('/messages', async (req, res) => {
     await handleAnthropicMessages(req, res)
   })
@@ -102,6 +111,20 @@ async function handleAnthropicMessages(req: Request, res: Response) {
 
   try {
     decision = resolveRoute(config, body)
+    if (decision.providerName === 'codex') {
+      inputTokens = estimateTokens(body)
+      await handleCodexAnthropicMessages(req, res, {
+        body,
+        requestedModel,
+        targetModel: decision.targetModel,
+        startedAt,
+        inputTokens,
+        delayMs: decision.delayMs,
+        signal: clientDisconnect.signal,
+      })
+      return
+    }
+
     if (shouldForwardClaudeCode(decision)) {
       await forwardClaudeCodeMessages(
         req,

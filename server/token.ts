@@ -1,37 +1,74 @@
 const cjkPattern = /[\u3400-\u9fff\uf900-\ufaff]/g
+const objectTokenCache = new WeakMap<object, number>()
 
 export function estimateTokens(value: unknown): number {
-  const text = collectText(value).trim()
-  if (!text) {
+  if (value && typeof value === 'object') {
+    const cached = objectTokenCache.get(value)
+    if (typeof cached === 'number') {
+      return cached
+    }
+  }
+
+  const stats = collectTokenStats(value)
+  if (!stats.hasText) {
     return 0
   }
 
-  const cjkCount = text.match(cjkPattern)?.length ?? 0
-  const latinLength = text.replace(cjkPattern, '').length
+  const latinLength = stats.length - stats.cjkCount
+  const tokens = Math.max(1, Math.ceil(stats.cjkCount + latinLength / 4))
+  if (value && typeof value === 'object') {
+    objectTokenCache.set(value, tokens)
+  }
 
-  return Math.max(1, Math.ceil(cjkCount + latinLength / 4))
+  return tokens
 }
 
-function collectText(value: unknown): string {
+function collectTokenStats(value: unknown): { cjkCount: number; length: number; hasText: boolean } {
+  const stats = {
+    cjkCount: 0,
+    length: 0,
+    hasText: false,
+  }
+  appendTokenStats(value, stats)
+  return stats
+}
+
+function appendTokenStats(
+  value: unknown,
+  stats: { cjkCount: number; length: number; hasText: boolean },
+) {
   if (value == null) {
-    return ''
+    return
   }
 
   if (typeof value === 'string') {
-    return value
+    appendStringStats(value, stats)
+    return
   }
 
   if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value)
+    appendStringStats(String(value), stats)
+    return
   }
 
   if (Array.isArray(value)) {
-    return value.map(collectText).join('\n')
+    for (const item of value) {
+      appendTokenStats(item, stats)
+    }
+    return
   }
 
   if (typeof value === 'object') {
-    return Object.values(value).map(collectText).join('\n')
+    for (const item of Object.values(value)) {
+      appendTokenStats(item, stats)
+    }
   }
+}
 
-  return ''
+function appendStringStats(value: string, stats: { cjkCount: number; length: number; hasText: boolean }) {
+  if (/\S/.test(value)) {
+    stats.hasText = true
+  }
+  stats.length += value.length
+  stats.cjkCount += value.match(cjkPattern)?.length ?? 0
 }

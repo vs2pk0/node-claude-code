@@ -1,8 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import CodexPage from '@/pages/CodexPage.vue'
 import DashboardPage from '@/pages/DashboardPage.vue'
 import ImportExportPage from '@/pages/ImportExportPage.vue'
 import ProvidersPage from '@/pages/ProvidersPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
+import UsageStatsPage from '@/pages/UsageStatsPage.vue'
 
 export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -29,6 +31,22 @@ export const router = createRouter({
       component: ProvidersPage,
       meta: {
         title: 'Provider 管理',
+      },
+    },
+    {
+      path: '/codex',
+      name: 'codex',
+      component: CodexPage,
+      meta: {
+        title: 'Codex 代理',
+      },
+    },
+    {
+      path: '/usage',
+      name: 'usage',
+      component: UsageStatsPage,
+      meta: {
+        title: '调用统计',
       },
     },
     {

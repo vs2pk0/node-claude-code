@@ -83,6 +83,7 @@ export const storage = {
   enqueueRequest,
   flushPendingRequests,
   getSummary,
+  getRequests,
   getRecentRequests,
   deleteAllRequests,
   deleteRequest,
@@ -302,9 +303,21 @@ function sumTokenColumn(column: 'input_tokens' | 'output_tokens' | 'total_tokens
   return `COALESCE(SUM(${value}), 0)`
 }
 
-function getRecentRequests(limit = 200): RequestRecord[] {
+function getRequests(input: { limit?: number; start?: string; end?: string } = {}): RequestRecord[] {
   flushPendingRequests()
   type RequestRow = Omit<RequestRecord, 'success'> & { success: number }
+  const limit = input.limit ?? 200
+  const clauses: string[] = []
+  const params: unknown[] = []
+
+  if (input.start) {
+    clauses.push('created_at >= ?')
+    params.push(input.start)
+  }
+  if (input.end) {
+    clauses.push('created_at <= ?')
+    params.push(input.end)
+  }
 
   const rows = db
     .prepare(
@@ -329,16 +342,21 @@ function getRecentRequests(limit = 200): RequestRecord[] {
           total_tokens AS totalTokens,
           error
         FROM requests
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
         ORDER BY created_at DESC
         LIMIT ?
       `,
     )
-    .all(limit) as RequestRow[]
+    .all(...params, limit) as RequestRow[]
 
   return rows.map((row) => ({
     ...row,
     success: Boolean(row.success),
   }))
+}
+
+function getRecentRequests(limit = 200): RequestRecord[] {
+  return getRequests({ limit })
 }
 
 function ensureRequestColumn(column: string, definition: string) {
