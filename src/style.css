@@ -1196,6 +1196,36 @@ pre,
   line-height: 1.55;
 }
 
+.json-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.json-editor-alert {
+  margin-bottom: 12px;
+}
+
+.json-editor textarea {
+  max-height: min(68vh, 760px);
+  overflow: auto;
+  border-color: #224449;
+  background:
+    linear-gradient(135deg, rgba(48, 121, 115, 0.16), transparent 32%),
+    #101719;
+  color: #d9eeea;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+  tab-size: 2;
+}
+
+.json-editor textarea:focus {
+  border-color: #2f7f78;
+  box-shadow: 0 0 0 2px rgba(47, 127, 120, 0.16);
+}
+
 .curl-import-editor {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
 }

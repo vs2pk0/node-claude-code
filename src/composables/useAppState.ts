@@ -266,6 +266,24 @@ async function persistConfig() {
   }
 }
 
+async function saveJsonConfig(jsonText: string) {
+  const previousConfig = draft.value ? deepClone(draft.value) : undefined
+  const parsed = JSON.parse(jsonText) as AppConfig
+
+  loading.saving = true
+  try {
+    draft.value = await saveConfig(parsed)
+    syncProviderEditors()
+    await applyRuntimeConfigIfNeeded(previousConfig, draft.value, 'save')
+    await loadStats()
+  } catch (error) {
+    message.error(readError(error))
+    throw error
+  } finally {
+    loading.saving = false
+  }
+}
+
 async function downloadSettings() {
   try {
     const blob = await exportConfig()
@@ -1324,6 +1342,7 @@ export function useAppState() {
     loadStats,
     loadHealth,
     persistConfig,
+    saveJsonConfig,
     downloadSettings,
     startService,
     stopService,

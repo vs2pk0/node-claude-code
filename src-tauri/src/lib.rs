@@ -565,9 +565,30 @@ fn terminate_processes_matching_path(path: &Path) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn terminate_processes_matching_path(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let needle = escape_powershell_single_quoted(&path.display().to_string());
+    let current_pid = std::process::id();
+    let script = format!(
+        "$needle = '{needle}'; \
+         Get-CimInstance Win32_Process | \
+         Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains($needle) -and $_.ProcessId -ne {current_pid} }} | \
+         ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
+    );
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .status();
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn terminate_processes_matching_path(_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn escape_powershell_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn embedded_runtime_root(app: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -606,8 +627,22 @@ fn desktop_data_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
         return Ok(PathBuf::from(home).join(".node-claude-code"));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
+        if let Some(home) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
+            return Ok(PathBuf::from(home).join(".node-claude-code"));
+        }
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA").filter(|value| !value.is_empty()) {
+            return Ok(PathBuf::from(local_app_data).join("node-claude-code"));
+        }
+        return Ok(std::env::current_dir()?.join("data"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
+            return Ok(PathBuf::from(home).join(".node-claude-code"));
+        }
         Ok(std::env::current_dir()?.join("data"))
     }
 }
