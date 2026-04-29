@@ -592,14 +592,7 @@ fn escape_powershell_single_quoted(value: &str) -> String {
 }
 
 fn embedded_runtime_root(app: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("resources")
-        .join("app");
-    if source_path.exists() {
-        return Ok(source_path);
-    }
-
-    Ok(app.path().resource_dir()?.join("app"))
+    bundled_resource_path(app, Path::new("app"))
 }
 
 fn embedded_node_path(app: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -608,16 +601,44 @@ fn embedded_node_path(app: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Er
     } else {
         "node"
     };
+    bundled_resource_path(app, Path::new("bin").join(executable_name))
+}
+
+fn bundled_resource_path(
+    app: &AppHandle,
+    relative_path: impl AsRef<Path>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let relative_path = relative_path.as_ref();
     let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("resources")
-        .join("bin")
-        .join(executable_name);
-
+        .join(relative_path);
     if source_path.exists() {
         return Ok(source_path);
     }
 
-    Ok(app.path().resource_dir()?.join("bin").join(executable_name))
+    let resource_dir = app.path().resource_dir()?;
+    let candidates = [
+        resource_dir.join(relative_path),
+        resource_dir.join("resources").join(relative_path),
+    ];
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Ok(candidate.clone());
+        }
+    }
+
+    let checked_paths = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "找不到内置运行资源 {}，已检查: {}",
+        relative_path.display(),
+        checked_paths
+    )
+    .into())
 }
 
 fn desktop_data_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
